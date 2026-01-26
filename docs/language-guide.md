@@ -157,7 +157,7 @@ The pipe operator passes the value on the left as the first argument to the func
 
 // Chaining operations
 let value: int = 10;
-value |> add(5) |> multiply(2) |> print();  // print(multiply(add(value, 5), 2))
+value |> (x -> x + 5) |> (x -> x * 2) |> print();  // print((value + 5) * 2)
 ```
 
 ## Syntax Rules

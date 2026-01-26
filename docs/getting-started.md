@@ -30,7 +30,7 @@ java -jar runescript.jar <file.rn>
 Create a file named `hello.rn` with the following content:
 
 ```runescript
-println("Hello, RuneScript!")
+print("Hello, RuneScript!")
 ```
 
 Run the script:
@@ -50,7 +50,7 @@ Create a file named `math.rn`:
 
 ```runescript
 result = 10 + 5 * 2
-println("Result: " + result)
+print("Result: " + result)
 ```
 
 Run the script:
@@ -69,9 +69,9 @@ Result: 20
 Create a file named `pipe.rn` to demonstrate the pipe operator:
 
 ```runescript
-numbers = [1, 2, 3, 4, 5]
-result = numbers |> map(x -> x * 2) |> filter(x -> x > 4) |> sum()
-println("Result: " + result)
+value = 5
+result = value |> (x -> x * 2) |> (x -> x + 10)
+print("Result: " + result)
 ```
 
 Run the script:
@@ -82,7 +82,7 @@ java -jar runescript.jar pipe.rn
 
 Expected output:
 ```
-Result: 18
+Result: 20
 ```
 
 ## Development Environment

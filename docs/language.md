@@ -52,15 +52,16 @@ result = if (x > 0) then x else -x
 #### Loops
 
 ```runescript
-// For loop
-for (i in range(0, 10)) {
-  println(i)
+// For loop - iterating over a list
+items = [1, 2, 3, 4, 5]
+for (item in items) {
+  print(item)
 }
 
 // While loop
 counter = 0
 while (counter < 5) {
-  println(counter)
+  print(counter)
   counter = counter + 1
 }
 ```
@@ -145,28 +146,15 @@ func(value, arg)
 
 ### Practical Examples
 
-Processing a list of numbers:
+Simple pipe operations:
 
 ```runescript
-numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-// Find even numbers, double them, and sum the results
-result = numbers
-  |> filter(x -> x % 2 == 0)  // [2, 4, 6, 8, 10]
-  |> map(x -> x * 2)          // [4, 8, 12, 16, 20]
-  |> sum()                    // 60
-```
-
-Processing text:
-
-```runescript
-sentence = "the quick brown fox jumps over the lazy dog"
-
-words = sentence
-  |> split(" ")               // Split into words
-  |> map(word -> capitalize(word))  // Capitalize each word
-  |> join(" ")                // Join back into a sentence
-// Result: "The Quick Brown Fox Jumps Over The Lazy Dog"
+// Example: Transform a value through multiple operations
+value = 5
+result = value
+  |> (x -> x * 2)             // Double the value
+  |> (x -> x + 10)            // Add 10
+// Result: 20
 ```
 
 ## Modules
@@ -192,8 +180,8 @@ RuneScript provides basic error handling:
 try {
   riskyOperation()
 } catch (error) {
-  println("An error occurred: " + error.message)
+  print("An error occurred: " + error.message)
 } finally {
-  println("Cleanup code here")
+  print("Cleanup code here")
 }
 ```

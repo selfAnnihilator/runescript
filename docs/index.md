@@ -20,7 +20,7 @@ To get started with RuneScript, you'll need Java 21 or higher installed on your 
 1. Download the latest `runescript.jar` release
 2. Create a simple script file (`hello.rn`):
    ```runescript
-   println("Hello, RuneScript!")
+   print("Hello, RuneScript!")
    ```
 3. Run the script:
    ```bash
