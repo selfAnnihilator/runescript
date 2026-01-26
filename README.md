@@ -2,6 +2,10 @@
 
 RuneScript is a tiny, statically-typed scripting language compiled to custom stack-based bytecode executed by a VM (also in Java). It features a unique pipe operator and supports modern programming constructs.
 
+## 📘 Documentation
+
+For complete documentation, visit our [online documentation](https://selfannihilator.github.io/runescript/).
+
 ## 🎓 Student Project Information
 
 This is an educational compiler project demonstrating:
