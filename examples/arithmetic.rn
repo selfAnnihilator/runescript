@@ -1,0 +1,9 @@
+let a: int = 10;
+let b: int = 3;
+
+print(a + b);       // 13
+print(a - b);       // 7
+print(a * b);       // 30
+print(a / b);       // 3 (integer division)
+print(a > b);       // true
+print(a == b);      // false

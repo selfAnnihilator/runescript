@@ -1,0 +1,26 @@
+// Simple RuneScript Demo
+print("Hello, RuneScript!");
+
+// Basic arithmetic
+print(5 + 3);
+print(10 - 4);
+print(6 * 7);
+
+// Boolean operations
+print(true);
+print(false);
+
+// Comparison
+print(5 > 3);
+print(10 == 10);
+
+// Simple loop
+let counter: int = 0;
+while (counter < 3) {
+    print("Counter: ");
+    print(counter);
+    counter = counter + 1;
+}
+
+// Using pipe operator
+5 |> print();

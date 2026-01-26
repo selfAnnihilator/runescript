@@ -1,0 +1,39 @@
+# Compiled class files
+*.class
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log files
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Build outputs
+build/
+dist/
+target/
+
+# Local configuration
+config.local
+.env
+
+# Internal technical documentation (not for public repo)
+TECHNICAL_DOCS.md
+PACKAGE_SUMMARY.md
+REPO_STRUCTURE.md
+FINAL_REPOSITORY_STATUS.md
+GIT_SETUP_INSTRUCTIONS.md

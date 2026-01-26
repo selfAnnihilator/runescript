@@ -1,0 +1,7 @@
+let x: int = 42;
+let y: int = 18;
+let name: string = "World";
+
+x = x + y;
+print(x);
+print(name);

@@ -1,0 +1,37 @@
+// Example: Simple calculator with conditional logic
+let num1: int = 15;
+let num2: int = 4;
+
+print("Calculator Demo");
+print("Numbers: ", num1, " and ", num2);
+
+let sum: int = num1 + num2;
+let diff: int = num1 - num2;
+let prod: int = num1 * num2;
+let quot: int = num1 / num2;
+
+print("Sum: ", sum);
+print("Difference: ", diff);
+print("Product: ", prod);
+print("Quotient: ", quot);
+
+// Conditional logic
+if (num1 > num2) {
+    print(num1, " is greater than ", num2);
+} else if (num1 < num2) {
+    print(num1, " is less than ", num2);
+} else {
+    print(num1, " equals ", num2);
+}
+
+// Loop example
+print("Counting down from ", num1, ":");
+let countdown: int = num1;
+while (countdown > num1 - 5) {
+    print(countdown);
+    countdown = countdown - 1;
+}
+
+// Demonstrate pipe operator (passes value as first argument)
+print("Using pipe operator:");
+5 |> print();  // Same as print(5)
