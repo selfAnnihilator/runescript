@@ -1,7 +1,7 @@
 site_name: RuneScript Compiler Documentation
 site_url: https://selfAnnihilator.github.io/runescript  # Update with your actual URL
 repo_url: https://github.com/selfAnnihilator/runescript
-repo_name: yourusername/rune-script-compiler
+repo_name: selfAnnihilator/runescript
 edit_uri: edit/main/docs/
 theme:
   name: material
