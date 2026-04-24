@@ -1,7 +1,19 @@
-let x: int = 42;
-let y: int = 18;
-let name: string = "World";
+// Variable declarations with type annotations
+let name: string = "Alice";
+let age: int = 25;
+let active: bool = true;
 
-x = x + y;
-print(x);
-print(name);
+print("Name:   ", name);
+print("Age:    ", age);
+print("Active: ", active);
+
+// Reassignment
+age = age + 1;
+print("Next year: ", age);
+
+// Scoped block — x only exists inside the braces
+{
+    let x: int = 100;
+    print("Inside block: ", x);
+}
+// x is gone here

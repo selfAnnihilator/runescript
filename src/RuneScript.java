@@ -84,14 +84,14 @@ public class RuneScript {
         // Generate bytecode
         BytecodeEmitter emitter = new BytecodeEmitter();
         for (Stmt stmt : statements) {
-            // For now just emit a simple representation of the bytecode
-            // In a real implementation, we'd convert AST to bytecode
+            emitter.compileStmt(stmt);
         }
+        emitter.emitReturn(0);
 
         Chunk chunk = emitter.getChunk();
         System.out.println("Bytecode instructions:");
         for (int i = 0; i < chunk.codeSize(); i++) {
-            System.out.println(i + ": " + Instruction.OpCode.values()[chunk.codeAt(i)]);
+            System.out.println(i + ": " + Instruction.OpCode.values()[chunk.codeAt(i) & 0xFF]);
         }
     }
 
@@ -99,13 +99,43 @@ public class RuneScript {
         BufferedReader reader =
             new BufferedReader(new InputStreamReader(System.in));
 
+        // Persistent VM and local variable names across REPL lines.
+        // The VM's stack is NOT reset between calls, so locals stay live.
+        VM replVM = new VM();
+        List<String> persistentLocalNames = new ArrayList<>();
+
         System.out.println("RuneScript REPL - Type 'exit' to quit");
         while (true) {
             System.out.print("> ");
             String line = reader.readLine();
             if (line == null || line.trim().equals("exit")) break;
+            if (line.isBlank()) continue;
 
-            new RuneScriptInterpreter().run(line);
+            try {
+                Lexer lexer = new Lexer(line);
+                List<Token> tokens = lexer.scanTokens();
+                Parser parser = new Parser(tokens);
+                List<Stmt> statements = parser.parse();
+                if (statements.isEmpty()) continue;
+
+                BytecodeEmitter emitter = new BytecodeEmitter(new ArrayList<>(persistentLocalNames));
+                for (Stmt stmt : statements) {
+                    emitter.compileStmt(stmt);
+                }
+
+                // Only expression statements get "Returned: null"; declarations are silent.
+                Stmt last = statements.get(statements.size() - 1);
+                if (last instanceof Stmt.Expression) {
+                    emitter.emit((byte)Instruction.OpCode.NIL.ordinal(), 0);
+                    emitter.emit((byte)Instruction.OpCode.RETURN.ordinal(), 0);
+                }
+                // For Stmt.Var / if / while / block: VM runs to end of chunk silently.
+
+                persistentLocalNames = emitter.getLocalNames();
+                replVM.interpret(emitter.getChunk());
+            } catch (Exception ex) {
+                System.err.println("Error: " + ex.getMessage());
+            }
         }
     }
 }
@@ -163,7 +193,8 @@ enum TokenType {
     EQUAL, EQUAL_EQUAL,
     GREATER, GREATER_EQUAL,
     LESS, LESS_EQUAL,
-    PIPE_ARROW,
+    PIPE_ARROW,   // |>
+    ARROW,        // ->
 
     // Literals
     IDENTIFIER, STRING, NUMBER,
@@ -182,7 +213,7 @@ enum TokenType {
 sealed interface Expr permits
     Expr.Assign, Expr.Binary, Expr.Call, Expr.Grouping,
     Expr.Literal, Expr.Logical, Expr.Unary,
-    Expr.Variable, Expr.Pipe {
+    Expr.Variable, Expr.Pipe, Expr.Lambda {
 
     record Assign(Token name, Expr value) implements Expr {}
 
@@ -201,6 +232,9 @@ sealed interface Expr permits
     record Variable(Token name) implements Expr {}
 
     record Pipe(Expr value, Expr call) implements Expr {}
+
+    // (param, param -> body_expr)
+    record Lambda(List<Token> params, Expr body) implements Expr {}
 }
 
 // Statement AST nodes
@@ -288,7 +322,9 @@ class Lexer {
             case '*': addToken(TokenType.STAR); break;
             case ':': addToken(TokenType.COLON); break;
             case '+': addToken(TokenType.PLUS); break;
-            case '-': addToken(TokenType.MINUS); break;
+            case '-':
+                addToken(match('>') ? TokenType.ARROW : TokenType.MINUS);
+                break;
 
             case '!':
                 addToken(match('=') ? TokenType.BANG_EQUAL : TokenType.BANG);
@@ -682,12 +718,45 @@ class Parser {
         }
 
         if (match(TokenType.LEFT_PAREN)) {
+            if (isLambdaStart()) {
+                return parseLambda();
+            }
             Expr expr = expression();
             consume(TokenType.RIGHT_PAREN, "Expected ')' after expression.");
             return new Expr.Grouping(expr);
         }
 
         throw error(peek(), "Expected expression.");
+    }
+
+    // Look-ahead to determine if '(' starts a lambda rather than a grouped expr.
+    // A lambda looks like: (identifier -> ...) or (identifier, identifier -> ...)
+    private boolean isLambdaStart() {
+        int saved = current;
+        boolean result = false;
+        if (check(TokenType.IDENTIFIER)) {
+            advance();
+            while (match(TokenType.COMMA)) {
+                if (!check(TokenType.IDENTIFIER)) { result = false; current = saved; return false; }
+                advance();
+            }
+            result = check(TokenType.ARROW);
+        }
+        current = saved;
+        return result;
+    }
+
+    // Parse (param, ... -> body_expr) — '(' already consumed.
+    private Expr parseLambda() {
+        List<Token> params = new ArrayList<>();
+        params.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
+        while (match(TokenType.COMMA)) {
+            params.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
+        }
+        consume(TokenType.ARROW, "Expected '->' in lambda.");
+        Expr body = expression();
+        consume(TokenType.RIGHT_PAREN, "Expected ')' after lambda body.");
+        return new Expr.Lambda(params, body);
     }
 
     private boolean match(TokenType... types) {
@@ -918,33 +987,29 @@ class Resolver {
             }
         } else if (expr instanceof Expr.Grouping groupExpr) {
             return resolve(groupExpr.expression());
+        } else if (expr instanceof Expr.Lambda lambdaExpr) {
+            // Don't deeply type-check lambda bodies; just return a function type placeholder.
+            return new Type.NilType();
         } else if (expr instanceof Expr.Call callExpr) {
-            // For our built-in functions like print()
             if (callExpr.callee() instanceof Expr.Variable var &&
                 var.name().lexeme().equals("print")) {
-                // print accepts any type
-                for (Expr arg : callExpr.arguments()) {
-                    resolve(arg);
-                }
-                return new Type.NilType(); // print returns nil
+                for (Expr arg : callExpr.arguments()) resolve(arg);
+                return new Type.NilType();
             }
-            // For other function calls, we'd need function type checking
-            error(callExpr.paren(), "Function calls not yet supported.");
-            return new Type.ErrorType();
+            // Generic call — callee might be a lambda variable; resolve it but don't error.
+            resolve(callExpr.callee());
+            for (Expr arg : callExpr.arguments()) resolve(arg);
+            return new Type.NilType();
         } else if (expr instanceof Expr.Pipe pipeExpr) {
-            // Resolve the value part
-            Type sourceType = resolve(pipeExpr.value());
-
-            // For pipe, the first argument of the call becomes the piped value
-            if (pipeExpr.call() instanceof Expr.Call call) {
-                // Prepend the source type to the beginning of the call arguments
-                // This would require more complex handling
-                for (Expr arg : call.arguments()) {
-                    resolve(arg);
-                }
-                // Return type depends on the called function
-                return new Type.IntType(); // Placeholder
+            resolve(pipeExpr.value());
+            Expr rhs = pipeExpr.call();
+            if (rhs instanceof Expr.Call call) {
+                resolve(call.callee());
+                for (Expr arg : call.arguments()) resolve(arg);
+            } else {
+                resolve(rhs);
             }
+            return new Type.NilType();
         }
 
         return new Type.ErrorType();
@@ -1026,7 +1091,8 @@ sealed interface Instruction permits
     Instruction.Equal, Instruction.Greater, Instruction.Less,
     Instruction.JumpIfFalse, Instruction.Jump, Instruction.Print,
     Instruction.Pop, Instruction.GetLocal, Instruction.SetLocal,
-    Instruction.Return {
+    Instruction.Return, Instruction.Not,
+    Instruction.MakeLambda, Instruction.Call {
 
     enum OpCode {
         CONSTANT,
@@ -1036,7 +1102,9 @@ sealed interface Instruction permits
         JUMP_IF_FALSE, JUMP,
         PRINT, POP,
         GET_LOCAL, SET_LOCAL,
-        RETURN
+        RETURN, NOT,
+        MAKE_LAMBDA,  // arg: constant-pool index of LambdaTemplate
+        CALL          // arg: argument count (callee is on top of stack, above args)
     }
 
     record Constant(int constantIndex) implements Instruction {}
@@ -1058,6 +1126,40 @@ sealed interface Instruction permits
     record GetLocal(int slot) implements Instruction {}
     record SetLocal(int slot) implements Instruction {}
     record Return() implements Instruction {}
+    record Not() implements Instruction {}
+    record MakeLambda(int templateIndex) implements Instruction {}
+    record Call(int argCount) implements Instruction {}
+}
+
+// Template stored in the constant pool; carries AST + captured variable names.
+class LambdaTemplate {
+    final List<String> params;
+    final Expr body;
+    final List<String> capturedNames; // in-scope local names at definition site
+
+    LambdaTemplate(List<String> params, Expr body, List<String> capturedNames) {
+        this.params = params;
+        this.body = body;
+        this.capturedNames = capturedNames;
+    }
+}
+
+// Runtime closure value: a lambda paired with captured variable values.
+class LambdaValue {
+    final List<String> params;
+    final Expr body;
+    final Map<String, Object> capturedEnv;
+
+    LambdaValue(List<String> params, Expr body, Map<String, Object> capturedEnv) {
+        this.params = params;
+        this.body = body;
+        this.capturedEnv = capturedEnv;
+    }
+
+    @Override
+    public String toString() {
+        return "<lambda(" + String.join(", ", params) + ")>";
+    }
 }
 
 // Chunk class to hold bytecode and constants
@@ -1077,6 +1179,7 @@ class Chunk {
     }
 
     public byte codeAt(int index) { return code.get(index); }
+    public void patchAt(int index, byte value) { code.set(index, value); }
     public int lineAt(int index) { return lines.get(index); }
     public Object constantAt(int index) { return constants.get(index); }
     public int codeSize() { return code.size(); }
@@ -1085,17 +1188,28 @@ class Chunk {
 // Bytecode emitter
 class BytecodeEmitter {
     private final Chunk chunk;
-    private final Map<String, Integer> locals = new HashMap<>();
+    private final List<String> localNames = new ArrayList<>();
     private int localCount = 0;
+    private final List<Integer> scopeStartCounts = new ArrayList<>();
 
     public BytecodeEmitter() {
         this.chunk = new Chunk();
     }
 
+    public BytecodeEmitter(List<String> initialLocalNames) {
+        this.chunk = new Chunk();
+        this.localNames.addAll(initialLocalNames);
+        this.localCount = initialLocalNames.size();
+    }
+
+    public List<String> getLocalNames() {
+        return new ArrayList<>(localNames);
+    }
+
     public void emit(byte instruction, int line) {
         chunk.write(instruction, line);
     }
-    
+
     public void emit(int instruction, int line) {
         chunk.write((byte) instruction, line);
     }
@@ -1111,11 +1225,57 @@ class BytecodeEmitter {
     }
 
     public void declareVariable(String name) {
-        locals.put(name, localCount++);
+        localNames.add(name);
+        localCount++;
     }
 
     public Integer getVariableSlot(String name) {
-        return locals.get(name);
+        for (int i = localNames.size() - 1; i >= 0; i--) {
+            if (localNames.get(i).equals(name)) return i;
+        }
+        return null;
+    }
+
+    public void beginScope() {
+        scopeStartCounts.add(localCount);
+    }
+
+    public void endScope(int line) {
+        int scopeStart = scopeStartCounts.remove(scopeStartCounts.size() - 1);
+        int toPop = localCount - scopeStart;
+        for (int i = 0; i < toPop; i++) {
+            emit((byte)Instruction.OpCode.POP.ordinal(), line);
+            localNames.remove(localNames.size() - 1);
+        }
+        localCount = scopeStart;
+    }
+
+    // Emits a jump with a 2-byte placeholder offset; returns position of high byte for patching.
+    public int emitJump(int opcode, int line) {
+        emit((byte)opcode, line);
+        emit((byte)0xFF, line);
+        emit((byte)0xFF, line);
+        return chunk.codeSize() - 2;
+    }
+
+    // Patches a previously emitted jump with the correct forward offset.
+    public void patchJump(int jumpPos) {
+        int offset = chunk.codeSize() - jumpPos - 2;
+        if (offset > 65535) throw new RuntimeException("Jump offset too large");
+        chunk.patchAt(jumpPos, (byte)((offset >> 8) & 0xFF));
+        chunk.patchAt(jumpPos + 1, (byte)(offset & 0xFF));
+    }
+
+    // Emits a backward JUMP to loopStart using a signed 2-byte offset.
+    public void emitLoop(int loopStart, int line) {
+        emit((byte)Instruction.OpCode.JUMP.ordinal(), line);
+        int highBytePos = chunk.codeSize();
+        emit((byte)0, line);
+        emit((byte)0, line);
+        // After VM decodes: ip = highBytePos + 2; we want ip = loopStart.
+        int offset = loopStart - chunk.codeSize(); // negative (backward)
+        chunk.patchAt(highBytePos, (byte)((offset >> 8) & 0xFF));
+        chunk.patchAt(highBytePos + 1, (byte)(offset & 0xFF));
     }
 
     public Chunk getChunk() {
@@ -1123,56 +1283,108 @@ class BytecodeEmitter {
     }
 
     public void emitReturn(int line) {
+        // Pop all remaining locals so RETURN always sees null on the stack.
+        for (int i = 0; i < localCount; i++) {
+            emit((byte)Instruction.OpCode.POP.ordinal(), line);
+        }
+        emit((byte)Instruction.OpCode.NIL.ordinal(), line);
         emit((byte)Instruction.OpCode.RETURN.ordinal(), line);
     }
 
-    // Visit methods for different expression types
-    public void visitLiteral(Expr.Literal literal, int line) {
-        if (literal.value() instanceof Integer i) {
-            emitConstant(i, line);
-        } else if (literal.value() instanceof String s) {
-            emitConstant(s, line);
-        } else if (literal.value() instanceof Boolean b) {
-            if (b) {
-                emit((byte)Instruction.OpCode.TRUE.ordinal(), line);
+    public void compileStmt(Stmt stmt) {
+        if (stmt instanceof Stmt.Expression exprStmt) {
+            visitExpression(exprStmt.expression());
+            emit((byte)Instruction.OpCode.POP.ordinal(), 0);
+        } else if (stmt instanceof Stmt.Var varStmt) {
+            if (varStmt.initializer() != null) {
+                visitExpression(varStmt.initializer());
             } else {
-                emit((byte)Instruction.OpCode.FALSE.ordinal(), line);
+                emit((byte)Instruction.OpCode.NIL.ordinal(), 0);
             }
+            declareVariable(varStmt.name().lexeme());
+        } else if (stmt instanceof Stmt.Block block) {
+            beginScope();
+            for (Stmt s : block.statements()) {
+                compileStmt(s);
+            }
+            endScope(0);
+        } else if (stmt instanceof Stmt.If ifStmt) {
+            visitExpression(ifStmt.condition());
+            int thenJump = emitJump(Instruction.OpCode.JUMP_IF_FALSE.ordinal(), 0);
+            compileStmt(ifStmt.thenBranch());
+            int elseJump = emitJump(Instruction.OpCode.JUMP.ordinal(), 0);
+            patchJump(thenJump);
+            if (ifStmt.elseBranch() != null) {
+                compileStmt(ifStmt.elseBranch());
+            }
+            patchJump(elseJump);
+        } else if (stmt instanceof Stmt.While whileStmt) {
+            int loopStart = chunk.codeSize();
+            visitExpression(whileStmt.condition());
+            int exitJump = emitJump(Instruction.OpCode.JUMP_IF_FALSE.ordinal(), 0);
+            compileStmt(whileStmt.body());
+            emitLoop(loopStart, 0);
+            patchJump(exitJump);
+        } else if (stmt instanceof Stmt.Assign assignStmt) {
+            visitExpression(assignStmt.value());
+            Integer slot = getVariableSlot(assignStmt.name().lexeme());
+            if (slot != null) {
+                emit((byte)Instruction.OpCode.SET_LOCAL.ordinal(), 0);
+                emit((byte)(int)slot, 0);
+            }
+            emit((byte)Instruction.OpCode.POP.ordinal(), 0);
+        }
+    }
+
+    public void visitLiteral(Expr.Literal literal, int line) {
+        Object val = literal.value();
+        if (val instanceof Double d) {
+            if (d == Math.floor(d) && !Double.isInfinite(d)) {
+                emitConstant(d.intValue(), line);
+            } else {
+                emitConstant(d, line);
+            }
+        } else if (val instanceof Integer i) {
+            emitConstant(i, line);
+        } else if (val instanceof String s) {
+            emitConstant(s, line);
+        } else if (val instanceof Boolean b) {
+            emit((byte)(b ? Instruction.OpCode.TRUE.ordinal() : Instruction.OpCode.FALSE.ordinal()), line);
         } else {
             emit((byte)Instruction.OpCode.NIL.ordinal(), line);
         }
     }
 
     public void visitBinary(Expr.Binary binary) {
-        // Visit left operand
         visitExpression(binary.left());
-
-        // Visit right operand
         visitExpression(binary.right());
 
-        // Emit operator
-        TokenType op = binary.operator().type();
-        switch (op) {
-            case PLUS -> emit((byte)Instruction.OpCode.ADD.ordinal(), binary.operator().line());
-            case MINUS -> emit((byte)Instruction.OpCode.SUBTRACT.ordinal(), binary.operator().line());
-            case STAR -> emit((byte)Instruction.OpCode.MULTIPLY.ordinal(), binary.operator().line());
-            case SLASH -> emit((byte)Instruction.OpCode.DIVIDE.ordinal(), binary.operator().line());
-            case EQUAL_EQUAL -> emit((byte)Instruction.OpCode.EQUAL.ordinal(), binary.operator().line());
-            case GREATER -> emit((byte)Instruction.OpCode.GREATER.ordinal(), binary.operator().line());
-            case LESS -> emit((byte)Instruction.OpCode.LESS.ordinal(), binary.operator().line());
-            // Handle other comparison operators as needed
+        int line = binary.operator().line();
+        switch (binary.operator().type()) {
+            case PLUS        -> emit((byte)Instruction.OpCode.ADD.ordinal(), line);
+            case MINUS       -> emit((byte)Instruction.OpCode.SUBTRACT.ordinal(), line);
+            case STAR        -> emit((byte)Instruction.OpCode.MULTIPLY.ordinal(), line);
+            case SLASH       -> emit((byte)Instruction.OpCode.DIVIDE.ordinal(), line);
+            case EQUAL_EQUAL -> emit((byte)Instruction.OpCode.EQUAL.ordinal(), line);
+            case BANG_EQUAL  -> { emit((byte)Instruction.OpCode.EQUAL.ordinal(), line);
+                                  emit((byte)Instruction.OpCode.NOT.ordinal(), line); }
+            case GREATER     -> emit((byte)Instruction.OpCode.GREATER.ordinal(), line);
+            case GREATER_EQUAL -> { emit((byte)Instruction.OpCode.LESS.ordinal(), line);
+                                    emit((byte)Instruction.OpCode.NOT.ordinal(), line); }
+            case LESS        -> emit((byte)Instruction.OpCode.LESS.ordinal(), line);
+            case LESS_EQUAL  -> { emit((byte)Instruction.OpCode.GREATER.ordinal(), line);
+                                  emit((byte)Instruction.OpCode.NOT.ordinal(), line); }
+            default -> System.err.println("Unknown binary operator: " + binary.operator().type());
         }
     }
 
     public void visitUnary(Expr.Unary unary) {
         visitExpression(unary.right());
-
-        TokenType op = unary.operator().type();
-        if (op == TokenType.MINUS) {
-            emit((byte)Instruction.OpCode.NEGATE.ordinal(), unary.operator().line());
-        } else if (op == TokenType.BANG) {
-            // For now, we'll just push false or true based on the value
-            // More sophisticated implementation needed
+        int line = unary.operator().line();
+        if (unary.operator().type() == TokenType.MINUS) {
+            emit((byte)Instruction.OpCode.NEGATE.ordinal(), line);
+        } else if (unary.operator().type() == TokenType.BANG) {
+            emit((byte)Instruction.OpCode.NOT.ordinal(), line);
         }
     }
 
@@ -1182,21 +1394,18 @@ class BytecodeEmitter {
             emit((byte)Instruction.OpCode.GET_LOCAL.ordinal(), variable.name().line());
             emit(slot, variable.name().line());
         } else {
-            // Error: undefined variable
-            System.err.println("Error: Undefined variable " + variable.name().lexeme());
+            System.err.println("Error: Undefined variable '" + variable.name().lexeme() + "'");
         }
     }
 
     public void visitAssign(Expr.Assign assign) {
         visitExpression(assign.value());
-
         Integer slot = getVariableSlot(assign.name().lexeme());
         if (slot != null) {
             emit((byte)Instruction.OpCode.SET_LOCAL.ordinal(), assign.name().line());
             emit(slot, assign.name().line());
         } else {
-            // Error: undefined variable
-            System.err.println("Error: Undefined variable " + assign.name().lexeme());
+            System.err.println("Error: Undefined variable '" + assign.name().lexeme() + "'");
         }
     }
 
@@ -1206,7 +1415,7 @@ class BytecodeEmitter {
 
     public void visitExpression(Expr expr) {
         if (expr instanceof Expr.Literal literal) {
-            visitLiteral(literal, 0); // line number should be extracted properly
+            visitLiteral(literal, 0);
         } else if (expr instanceof Expr.Binary binary) {
             visitBinary(binary);
         } else if (expr instanceof Expr.Unary unary) {
@@ -1221,44 +1430,62 @@ class BytecodeEmitter {
             visitCall(call);
         } else if (expr instanceof Expr.Pipe pipe) {
             visitPipe(pipe);
+        } else if (expr instanceof Expr.Lambda lambda) {
+            visitLambda(lambda);
         }
     }
 
+    // Emit MAKE_LAMBDA: captures all currently-in-scope locals at runtime.
+    private void visitLambda(Expr.Lambda lambda) {
+        List<String> params = lambda.params().stream().map(Token::lexeme).toList();
+        LambdaTemplate template = new LambdaTemplate(params, lambda.body(), new ArrayList<>(localNames));
+        int idx = addConstant(template);
+        emit((byte)Instruction.OpCode.MAKE_LAMBDA.ordinal(), 0);
+        emit((byte)idx, 0);
+    }
+
     private void visitCall(Expr.Call call) {
-        // For print() builtin
-        if (call.callee() instanceof Expr.Variable var &&
-            var.name().lexeme().equals("print")) {
-            // Process the argument first
-            if (!call.arguments().isEmpty()) {
-                visitExpression(call.arguments().get(0)); // Just first argument for now
-                emit((byte)Instruction.OpCode.PRINT.ordinal(), call.paren().line());
-                // Print returns nil, so push nil as return value
-                emit((byte)Instruction.OpCode.NIL.ordinal(), call.paren().line());
-            } else {
-                // Even if no arguments, print returns nil
-                emit((byte)Instruction.OpCode.NIL.ordinal(), call.paren().line());
-            }
+        if (call.callee() instanceof Expr.Variable var && var.name().lexeme().equals("print")) {
+            // Built-in print: push all args, PRINT count.
+            for (Expr arg : call.arguments()) visitExpression(arg);
+            emit((byte)Instruction.OpCode.PRINT.ordinal(), call.paren().line());
+            emit((byte)call.arguments().size(), call.paren().line());
+            emit((byte)Instruction.OpCode.NIL.ordinal(), call.paren().line());
         } else {
-            // Handle other function calls
-            // For now, just process arguments
-            for (Expr arg : call.arguments()) {
-                visitExpression(arg);
-            }
+            // Generic call: push args left-to-right, then push callee, then CALL n.
+            // Stack layout: [..., arg0, arg1, ..., argN-1, callee]
+            for (Expr arg : call.arguments()) visitExpression(arg);
+            visitExpression(call.callee());
+            emit((byte)Instruction.OpCode.CALL.ordinal(), call.paren().line());
+            emit((byte)call.arguments().size(), call.paren().line());
         }
     }
 
     private void visitPipe(Expr.Pipe pipe) {
-        // Process the piped value first
+        // The piped value is always arg0; push it first.
         visitExpression(pipe.value());
 
-        // Then process the call with the value as additional parameter
-        if (pipe.call() instanceof Expr.Call call) {
-            // This is a simplified version - in real implementation,
-            // we'd need to handle the piped value as the first argument
-            for (Expr arg : call.arguments()) {
-                visitExpression(arg);
+        Expr rhs = pipe.call();
+        if (rhs instanceof Expr.Call call) {
+            if (call.callee() instanceof Expr.Variable var && var.name().lexeme().equals("print")) {
+                // print: push extra args, then PRINT (1 + extras).
+                for (Expr arg : call.arguments()) visitExpression(arg);
+                emit((byte)Instruction.OpCode.PRINT.ordinal(), call.paren().line());
+                emit((byte)(1 + call.arguments().size()), call.paren().line());
+                emit((byte)Instruction.OpCode.NIL.ordinal(), call.paren().line());
+            } else {
+                // Named function call: push extra args, push callee, CALL (1 + extras).
+                for (Expr arg : call.arguments()) visitExpression(arg);
+                visitExpression(call.callee());
+                emit((byte)Instruction.OpCode.CALL.ordinal(), call.paren().line());
+                emit((byte)(1 + call.arguments().size()), call.paren().line());
             }
-            emit((byte)Instruction.OpCode.PRINT.ordinal(), 0); // Simplified example
+        } else {
+            // RHS is a lambda literal or a variable holding a lambda.
+            // Stack: [..., piped_value, callee]
+            visitExpression(rhs);
+            emit((byte)Instruction.OpCode.CALL.ordinal(), 0);
+            emit((byte)1, 0);
         }
     }
 }
@@ -1270,7 +1497,7 @@ class VM {
     private int stackPointer = 0;
 
     private Chunk chunk;
-    private int ip = 0; // instruction pointer
+    private int ip = 0;
 
     public static class RuntimeError extends RuntimeException {
         public RuntimeError(String message) {
@@ -1288,18 +1515,15 @@ class VM {
 
         try {
             while (true) {
-                if (ip >= chunk.codeSize()) {
-                    // Reached end of bytecode
-                    break;
-                }
-                
+                if (ip >= chunk.codeSize()) break;
+
                 Instruction.OpCode instruction = readOpCode();
                 switch (instruction) {
                     case CONSTANT: constant(); break;
                     case ADD: binaryOpInt(Integer::sum); break;
-                    case SUBTRACT: binaryOpInt((a, b) -> (Integer)a - (Integer)b); break;
-                    case MULTIPLY: binaryOpInt((a, b) -> (Integer)a * (Integer)b); break;
-                    case DIVIDE: binaryOpInt((a, b) -> (Integer)a / (Integer)b); break;
+                    case SUBTRACT: binaryOpInt((a, b) -> a - b); break;
+                    case MULTIPLY: binaryOpInt((a, b) -> a * b); break;
+                    case DIVIDE: binaryOpInt((a, b) -> a / b); break;
                     case NEGATE: negate(); break;
                     case TRUE: push(true); break;
                     case FALSE: push(false); break;
@@ -1307,29 +1531,39 @@ class VM {
                     case EQUAL: equality(); break;
                     case GREATER: binaryOpCompare((a, b) -> a > b); break;
                     case LESS: binaryOpCompare((a, b) -> a < b); break;
+                    case NOT: notOp(); break;
                     case PRINT: print(); break;
                     case POP: pop(); break;
                     case GET_LOCAL: getLocal(); break;
                     case SET_LOCAL: setLocal(); break;
-                    case RETURN: returnOp(); return; // Exit the interpret method
+                    case RETURN: returnOp(); return;
                     case JUMP_IF_FALSE: jumpIfFalse(); break;
                     case JUMP: jump(); break;
+                    case MAKE_LAMBDA: makeLambda(); break;
+                    case CALL: call(); break;
                     default:
                         throw new RuntimeError("Unknown opcode: " + instruction);
                 }
             }
         } catch (RuntimeError e) {
             System.err.println(e.getMessage());
-            return;
         }
     }
 
     private Instruction.OpCode readOpCode() {
-        return Instruction.OpCode.values()[chunk.codeAt(ip++)];
+        return Instruction.OpCode.values()[chunk.codeAt(ip++) & 0xFF];
+    }
+
+    private int readShortOffset() {
+        int high = chunk.codeAt(ip++) & 0xFF;
+        int low = chunk.codeAt(ip++) & 0xFF;
+        int offset = (high << 8) | low;
+        if (offset > 32767) offset -= 65536;
+        return offset;
     }
 
     private Object readConstant() {
-        int constantIndex = chunk.codeAt(ip++);
+        int constantIndex = chunk.codeAt(ip++) & 0xFF;
         return chunk.constantAt(constantIndex);
     }
 
@@ -1338,9 +1572,7 @@ class VM {
     }
 
     private Object pop() {
-        if (stackPointer <= 0) {
-            throw new RuntimeError("Stack underflow: Attempting to pop from empty stack");
-        }
+        if (stackPointer <= 0) throw new RuntimeError("Stack underflow");
         return stack[--stackPointer];
     }
 
@@ -1349,117 +1581,226 @@ class VM {
     }
 
     private void constant() {
-        Object value = readConstant();
-        // Convert numeric values to integers when appropriate
-        if (value instanceof Double) {
-            Double d = (Double) value;
-            if (d == Math.floor(d) && !Double.isInfinite(d)) {
-                push(d.intValue());
-            } else {
-                push(value); // Keep as Double for non-integer values
-            }
-        } else {
-            push(value);
-        }
+        push(readConstant());
     }
 
     private void binaryOpInt(BinaryOperator<Integer> op) {
         Object b = pop();
         Object a = pop();
-
-        Integer intA = convertToInteger(a);
-        Integer intB = convertToInteger(b);
-
-        if (intA == null || intB == null) {
-            throw new RuntimeError("Operands must be numbers.");
-        }
-
+        Integer intA = toInt(a);
+        Integer intB = toInt(b);
+        if (intA == null || intB == null) throw new RuntimeError("Operands must be numbers.");
         push(op.apply(intA, intB));
     }
-    
-    private Integer convertToInteger(Object value) {
-        if (value instanceof Integer) {
-            return (Integer) value;
-        } else if (value instanceof Double) {
-            Double d = (Double) value;
-            if (d == Math.floor(d) && !Double.isInfinite(d)) {
-                return d.intValue();
-            }
-        }
+
+    private Integer toInt(Object value) {
+        if (value instanceof Integer i) return i;
+        if (value instanceof Double d && d == Math.floor(d) && !Double.isInfinite(d))
+            return d.intValue();
         return null;
     }
 
     private void binaryOpCompare(BiFunction<Integer, Integer, Boolean> op) {
         Object b = pop();
         Object a = pop();
-
-        Integer intA = convertToInteger(a);
-        Integer intB = convertToInteger(b);
-
-        if (intA == null || intB == null) {
-            throw new RuntimeError("Operands must be numbers.");
-        }
-
-        Boolean result = op.apply(intA, intB);
-        push(result);
+        Integer intA = toInt(a);
+        Integer intB = toInt(b);
+        if (intA == null || intB == null) throw new RuntimeError("Operands must be numbers.");
+        push(op.apply(intA, intB));
     }
 
     private void negate() {
         Object value = pop();
+        Integer i = toInt(value);
+        if (i == null) throw new RuntimeError("Operand must be a number.");
+        push(-i);
+    }
 
-        Integer intValue = convertToInteger(value);
-        if (intValue == null) {
-            throw new RuntimeError("Operand must be a number.");
-        }
-
-        push(-intValue);
+    private void notOp() {
+        Object value = pop();
+        if (!(value instanceof Boolean)) throw new RuntimeError("Operand must be boolean.");
+        push(!(Boolean)value);
     }
 
     private void equality() {
         Object b = pop();
         Object a = pop();
-
-        push(a.equals(b));
+        if (a == null && b == null) push(true);
+        else if (a == null || b == null) push(false);
+        else push(a.equals(b));
     }
 
     private void print() {
-        Object value = pop();
-        System.out.println(value);
+        int count = chunk.codeAt(ip++) & 0xFF;
+        Object[] values = new Object[count];
+        for (int i = count - 1; i >= 0; i--) {
+            values[i] = pop();
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Object v : values) {
+            sb.append(v == null ? "null" : v.toString());
+        }
+        System.out.println(sb);
     }
 
     private void getLocal() {
-        int slot = chunk.codeAt(ip++);
+        int slot = chunk.codeAt(ip++) & 0xFF;
         push(stack[slot]);
     }
 
     private void setLocal() {
-        int slot = chunk.codeAt(ip++);
-        stack[slot] = peek(0);  // Don't pop, we want to keep the value on the stack
+        int slot = chunk.codeAt(ip++) & 0xFF;
+        stack[slot] = peek(0);
     }
 
     private void jumpIfFalse() {
-        int offset = chunk.codeAt(ip++);
-        if (!(Boolean)peek(0)) {
+        int offset = readShortOffset();
+        Object condition = pop();
+        if (condition instanceof Boolean b && !b) {
             ip += offset;
-        } else {
-            pop();  // Remove the boolean value from stack
         }
     }
 
     private void jump() {
-        int offset = chunk.codeAt(ip++);
+        int offset = readShortOffset();
         ip += offset;
     }
 
-    private void returnOp() {
-        // The return value should be on top of the stack
-        Object result = null;
-        if (stackPointer > 0) {
-            result = pop();
+    private void makeLambda() {
+        int idx = chunk.codeAt(ip++) & 0xFF;
+        LambdaTemplate template = (LambdaTemplate) chunk.constantAt(idx);
+        // Snapshot current local values for captured variables.
+        Map<String, Object> captured = new HashMap<>();
+        for (int i = 0; i < template.capturedNames.size() && i < stackPointer; i++) {
+            captured.put(template.capturedNames.get(i), stack[i]);
         }
+        push(new LambdaValue(template.params, template.body, captured));
+    }
+
+    // Stack before CALL n: [..., arg0, ..., argN-1, callee]
+    private void call() {
+        int argCount = chunk.codeAt(ip++) & 0xFF;
+        Object callee = pop();
+        Object[] args = new Object[argCount];
+        for (int i = argCount - 1; i >= 0; i--) args[i] = pop();
+
+        if (!(callee instanceof LambdaValue lambda)) {
+            throw new RuntimeError("Can only call lambda values, got: " +
+                (callee == null ? "null" : callee.getClass().getSimpleName()));
+        }
+        if (lambda.params.size() != argCount) {
+            throw new RuntimeError("Lambda expects " + lambda.params.size() +
+                " argument(s) but got " + argCount + ".");
+        }
+        Map<String, Object> env = new HashMap<>(lambda.capturedEnv);
+        for (int i = 0; i < lambda.params.size(); i++) env.put(lambda.params.get(i), args[i]);
+        push(evaluate(lambda.body, env));
+    }
+
+    // Tree-walk evaluator used for lambda bodies.
+    private Object evaluate(Expr expr, Map<String, Object> env) {
+        if (expr instanceof Expr.Literal lit) {
+            Object v = lit.value();
+            if (v instanceof Double d && d == Math.floor(d) && !Double.isInfinite(d))
+                return d.intValue();
+            return v;
+        }
+        if (expr instanceof Expr.Variable var) {
+            String name = var.name().lexeme();
+            if (!env.containsKey(name))
+                throw new RuntimeError("Undefined variable '" + name + "' in lambda body.");
+            return env.get(name);
+        }
+        if (expr instanceof Expr.Grouping g) return evaluate(g.expression(), env);
+        if (expr instanceof Expr.Unary u) {
+            Object val = evaluate(u.right(), env);
+            return switch (u.operator().type()) {
+                case MINUS -> -(toInt(val));
+                case BANG  -> !(Boolean) val;
+                default    -> throw new RuntimeError("Unknown unary op.");
+            };
+        }
+        if (expr instanceof Expr.Binary b) {
+            Object left  = evaluate(b.left(), env);
+            Object right = evaluate(b.right(), env);
+            return evalBinary(b.operator().type(), left, right);
+        }
+        if (expr instanceof Expr.Lambda lam) {
+            // Nested lambda: close over current env.
+            List<String> params = lam.params().stream().map(Token::lexeme).toList();
+            return new LambdaValue(params, lam.body(), new HashMap<>(env));
+        }
+        if (expr instanceof Expr.Call call) {
+            if (call.callee() instanceof Expr.Variable cv && cv.name().lexeme().equals("print")) {
+                StringBuilder sb = new StringBuilder();
+                for (Expr arg : call.arguments())
+                    sb.append(evaluate(arg, env));
+                System.out.println(sb);
+                return null;
+            }
+            Object callee = evaluate(call.callee(), env);
+            List<Object> args = new ArrayList<>();
+            for (Expr arg : call.arguments()) args.add(evaluate(arg, env));
+            return callLambda(callee, args, env);
+        }
+        if (expr instanceof Expr.Pipe pipe) {
+            Object piped = evaluate(pipe.value(), env);
+            Expr rhs = pipe.call();
+            if (rhs instanceof Expr.Call call) {
+                if (call.callee() instanceof Expr.Variable cv && cv.name().lexeme().equals("print")) {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(piped == null ? "null" : piped);
+                    for (Expr arg : call.arguments()) sb.append(evaluate(arg, env));
+                    System.out.println(sb);
+                    return null;
+                }
+                Object callee = evaluate(call.callee(), env);
+                List<Object> args = new ArrayList<>();
+                args.add(piped);
+                for (Expr arg : call.arguments()) args.add(evaluate(arg, env));
+                return callLambda(callee, args, env);
+            }
+            Object callee = evaluate(rhs, env);
+            return callLambda(callee, List.of(piped), env);
+        }
+        throw new RuntimeError("Cannot evaluate expression in lambda body: " +
+            expr.getClass().getSimpleName());
+    }
+
+    private Object callLambda(Object callee, List<Object> args, Map<String, Object> env) {
+        if (!(callee instanceof LambdaValue lambda))
+            throw new RuntimeError("Value is not callable: " + callee);
+        if (lambda.params.size() != args.size())
+            throw new RuntimeError("Lambda expects " + lambda.params.size() +
+                " arg(s), got " + args.size() + ".");
+        Map<String, Object> newEnv = new HashMap<>(lambda.capturedEnv);
+        for (int i = 0; i < lambda.params.size(); i++) newEnv.put(lambda.params.get(i), args.get(i));
+        return evaluate(lambda.body, newEnv);
+    }
+
+    private Object evalBinary(TokenType op, Object left, Object right) {
+        return switch (op) {
+            case PLUS         -> (left instanceof String || right instanceof String)
+                                     ? String.valueOf(left) + String.valueOf(right)
+                                     : toInt(left) + toInt(right);
+            case MINUS        -> toInt(left) - toInt(right);
+            case STAR         -> toInt(left) * toInt(right);
+            case SLASH        -> toInt(left) / toInt(right);
+            case EQUAL_EQUAL  -> (left == null && right == null) ||
+                                  (left != null && left.equals(right));
+            case BANG_EQUAL   -> !((left == null && right == null) ||
+                                   (left != null && left.equals(right)));
+            case GREATER      -> toInt(left) > toInt(right);
+            case GREATER_EQUAL-> toInt(left) >= toInt(right);
+            case LESS         -> toInt(left) < toInt(right);
+            case LESS_EQUAL   -> toInt(left) <= toInt(right);
+            default           -> throw new RuntimeError("Unknown operator in lambda: " + op);
+        };
+    }
+
+    private void returnOp() {
+        Object result = stackPointer > 0 ? pop() : null;
         System.out.println("Returned: " + result);
-        // The return instruction should cause the interpret method to exit
-        // This is handled by the caller returning from the interpret method
     }
 }
 
@@ -1489,34 +1830,9 @@ class RuneScriptInterpreter {
 
             // Emit bytecode
             BytecodeEmitter emitter = new BytecodeEmitter();
-            // Convert statements to bytecode (simplified implementation)
             for (Stmt stmt : statements) {
-                // Convert each statement to bytecode
-                if (stmt instanceof Stmt.Expression exprStmt) {
-                    // Convert expression to bytecode
-                    emitter.visitExpression(exprStmt.expression());
-                    emitter.emit((byte)Instruction.OpCode.POP.ordinal(), 0); // Pop result
-                } else if (stmt instanceof Stmt.Var varStmt) {
-                    // Declare variable in emitter
-                    emitter.declareVariable(varStmt.name().lexeme());
-                    if (varStmt.initializer() != null) {
-                        emitter.visitExpression(varStmt.initializer());
-                        Integer slot = emitter.getVariableSlot(varStmt.name().lexeme());
-                        if (slot != null) {
-                            emitter.emit((byte)Instruction.OpCode.SET_LOCAL.ordinal(), 0);
-                            emitter.emit((byte)(int)slot, 0);
-                        }
-                    }
-                } else if (stmt instanceof Stmt.Assign assignStmt) {
-                    emitter.visitExpression(assignStmt.value());
-                    Integer slot = emitter.getVariableSlot(assignStmt.name().lexeme());
-                    if (slot != null) {
-                        emitter.emit((byte)Instruction.OpCode.SET_LOCAL.ordinal(), 0);
-                        emitter.emit((byte)(int)slot, 0);
-                    }
-                }
+                emitter.compileStmt(stmt);
             }
-
             emitter.emitReturn(0);
 
             Chunk chunk = emitter.getChunk();

@@ -1,0 +1,28 @@
+// Closures capture variables from the surrounding scope
+// at the moment the lambda is defined.
+
+let base: int = 10;
+
+let add_base = (x -> x + base);
+print(add_base(5));    // 15
+
+// Captured by value — changing base afterwards has no effect
+base = 999;
+print(add_base(5));    // still 15, not 1004
+
+// Each closure captures independently
+let multiplier: int = 3;
+let times3 = (x -> x * multiplier);
+
+let multiplier2: int = 7;
+let times7 = (x -> x * multiplier2);
+
+print(times3(4));    // 12
+print(times7(4));    // 28
+
+// Practical use: building specialised functions from a general one
+let tax_rate: int = 18;
+let add_tax = (price -> price + price * tax_rate / 100);
+
+print(add_tax(100));   // 118
+print(add_tax(200));   // 236

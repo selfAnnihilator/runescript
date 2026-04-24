@@ -1,0 +1,25 @@
+// If / else if / else
+let score: int = 85;
+
+if (score >= 90) {
+    print("Grade: A");
+} else if (score >= 80) {
+    print("Grade: B");
+} else if (score >= 70) {
+    print("Grade: C");
+} else {
+    print("Grade: F");
+}
+
+// While loop
+let counter: int = 1;
+while (counter <= 5) {
+    print("Count: ", counter);
+    counter = counter + 1;
+}
+
+// Logical NOT
+let is_raining: bool = false;
+if (!is_raining) {
+    print("Good day for a walk.");
+}

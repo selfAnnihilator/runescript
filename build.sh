@@ -3,13 +3,13 @@
 
 echo "Building RuneScript..."
 
-# Compile the source
-javac src/RuneScript.java
+# Compile the source (output class files to src/)
+javac -d src src/RuneScript.java
 
 if [ $? -eq 0 ]; then
     # Create JAR file
-    jar cfm src/runescript.jar manifest.txt src/*.class
-    rm src/*.class  # Clean up compiled files
+    jar cfm src/runescript.jar manifest.txt -C src .
+    find src -name "*.class" -delete  # Clean up compiled files
     
     echo "Build successful!"
     echo "Run with: java -jar src/runescript.jar [options] [file]"

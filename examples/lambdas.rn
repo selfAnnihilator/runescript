@@ -1,0 +1,26 @@
+// Lambdas are anonymous functions: (params -> expression)
+
+// Store a lambda in a variable
+let double = (x -> x * 2);
+let square = (x -> x * x);
+let negate = (x -> x * -1);
+
+print(double(6));    // 12
+print(square(5));    // 25
+print(negate(8));    // -8
+
+// Multiple parameters
+let add = (a, b -> a + b);
+let multiply = (a, b -> a * b);
+
+print(add(3, 4));        // 7
+print(multiply(6, 7));   // 42
+
+// Lambdas work with any type
+let greet = (name -> "Hello, ");
+print(greet("Alice"));   // Hello,   (string ops in lambdas)
+
+// Boolean-returning lambda
+let is_even = (x -> x == x / 2 * 2);
+print(is_even(4));   // true
+print(is_even(7));   // false

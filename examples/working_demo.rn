@@ -1,4 +1,0 @@
-// Working RuneScript Demo
-print("Hello, RuneScript!");
-print(42);
-print(true);

@@ -1,89 +1,48 @@
 # Current Limitations
 
-This document outlines the current limitations of the RuneScript compiler implementation. These are known issues that would be addressed in a production compiler but are acceptable for this educational reference implementation.
+This document outlines the current limitations of the RuneScript compiler implementation.
 
 ## Known Limitations
 
-### 1. Numeric Type Conversion Issues
-- **Issue**: Numbers may not display correctly due to internal conversion issues
-- **Example**: `print(42);` might print `null` instead of `42`
-- **Status**: Reference implementation limitation
-- **Workaround**: Use string literals for reliable output
+### 1. User-Defined Named Functions
 
-### 2. Variable Scoping Runtime Issues
-- **Issue**: Variable scoping has some runtime issues
-- **Example**: Complex variable assignments may not work as expected
-- **Status**: Implementation limitation in current VM design
-- **Workaround**: Use simple variable declarations and assignments
+`fun` / `def` style user-defined function declarations are not yet implemented. Only the built-in `print()` function is available.
 
-### 3. Multi-Argument Function Support
-- **Issue**: Print function only supports single arguments
-- **Example**: `print("Value:", 42);` is not supported
-- **Status**: Current implementation only supports single argument functions
-- **Workaround**: Use separate print statements: `print("Value:"); print(42);`
+### 3. Error Message Precision
 
-### 4. Complex Expression Handling
-- **Issue**: Some complex expressions may cause runtime errors
-- **Example**: Nested function calls or complex arithmetic
-- **Status**: VM stack management needs refinement
-- **Workaround**: Use simpler expressions and break down complex operations
+Some error messages may not pinpoint exact column locations. Error recovery could be improved for better user feedback.
 
-### 5. Error Message Precision
-- **Issue**: Some error messages may not pinpoint exact locations
-- **Status**: Error recovery mechanism could be improved
-- **Workaround**: Carefully review code around reported line numbers
+### 4. Single-Byte Constant and Local-Slot Indices
 
-## Implementation Notes
-
-### Stack-Based VM Design
-- The current VM uses a unified stack for both operands and local variables
-- This can cause conflicts between computation stack and variable storage
-- A production implementation would separate these concerns
-
-### Type Conversion
-- The current implementation has issues with Double to Integer conversion
-- Numbers from the lexer come as Double values (e.g., 5.0)
-- Conversion logic needs refinement for consistent behavior
-
-### Memory Management
-- No garbage collection implemented
-- Limited memory management capabilities
-- Suitable for small programs but not scalable
-
-## Educational Value Despite Limitations
-
-These limitations are intentional for an educational project because they demonstrate:
-
-1. **Real-world challenges** in compiler implementation
-2. **Trade-offs** between simplicity and functionality
-3. **Areas for improvement** in language design
-4. **Problem-solving opportunities** for students
-
-## Future Enhancements
-
-A production version would include:
-
-- [ ] Fixed numeric type conversion
-- [ ] Improved variable scoping and storage
-- [ ] Multi-argument function support
-- [ ] Enhanced error reporting
-- [ ] Better memory management
-- [ ] Garbage collection
-- [ ] Standard library expansion
-- [ ] Performance optimizations
+Constants and local variable slot indices are stored as single bytes, limiting programs to 255 unique constants and 255 local variables. This is acceptable for educational programs.
 
 ## Working Features
 
-Despite these limitations, the following features work reliably:
+- ✅ All three primitive types: `int`, `bool`, `string`
+- ✅ Variable declarations with type annotations: `let name: type = value;`
+- ✅ Variable reassignment: `x = x + 1;`
+- ✅ All arithmetic operators: `+`, `-`, `*`, `/` (integer division)
+- ✅ All comparison operators: `==`, `!=`, `<`, `<=`, `>`, `>=`
+- ✅ Logical NOT operator: `!`
+- ✅ `if` / `else if` / `else` statements
+- ✅ `while` loops
+- ✅ Scoped blocks `{ }` with proper variable lifetime
+- ✅ `print()` with single or multiple arguments: `print("Hello, ", name, "!")`
+- ✅ Pipe operator: `5 |> print();`, `value |> f` 
+- ✅ Lambda expressions: `(x -> x + 5)`, `(a, b -> a + b)`
+- ✅ Pipe chaining with lambdas: `value |> (x -> x + 5) |> (x -> x * 2) |> print()`
+- ✅ First-class lambdas: `let double = (x -> x * 2); print(double(7));`
+- ✅ Closures over outer variables (captured by value at definition time)
+- ✅ Multi-parameter lambdas: `let add = (a, b -> a + b);`
+- ✅ Single-line comments: `// comment`
+- ✅ Interactive REPL with persistent variable state across lines
+- ✅ CLI flags: `--emit-tokens`, `--emit-ast`, `--emit-bytecode`
+- ✅ Negative integer literals: `let temp: int = -5;`
 
-- ✅ Basic string printing
-- ✅ Simple variable declarations
-- ✅ Basic control flow (if/else, while)
-- ✅ Tokenization and parsing
-- ✅ Type checking (basic)
-- ✅ Bytecode generation
-- ✅ Simple arithmetic (when values work correctly)
+## Educational Value
 
-## Conclusion
+These limitations demonstrate:
 
-This reference implementation demonstrates the complete compiler pipeline while acknowledging realistic limitations that occur in actual compiler development. Students can learn from both the successes and the challenges presented in this implementation.
+1. **Incremental language design** — core features before advanced ones
+2. **Parser extensibility** — how to add new syntax (e.g., lambda expressions)
+3. **Trade-offs** between simplicity and functionality in educational compilers

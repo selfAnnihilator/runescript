@@ -1,37 +1,41 @@
-// Example: Simple calculator with conditional logic
-let num1: int = 15;
-let num2: int = 4;
+// RuneScript — full feature demo
 
-print("Calculator Demo");
-print("Numbers: ", num1, " and ", num2);
+// ── Variables ──────────────────────────────────────────
+let name: string = "RuneScript";
+let version: int = 1;
+let ready: bool = true;
+print("Language: ", name, " v", version);
+print("Ready:    ", ready);
 
-let sum: int = num1 + num2;
-let diff: int = num1 - num2;
-let prod: int = num1 * num2;
-let quot: int = num1 / num2;
+// ── Arithmetic ─────────────────────────────────────────
+let a: int = 15;
+let b: int = 4;
+print("15 + 4 = ", a + b);
+print("15 * 4 = ", a * b);
+print("15 / 4 = ", a / b);
 
-print("Sum: ", sum);
-print("Difference: ", diff);
-print("Product: ", prod);
-print("Quotient: ", quot);
+// ── Control flow ───────────────────────────────────────
+let score: int = 87;
+if (score >= 90) { print("Grade: A"); }
+else if (score >= 80) { print("Grade: B"); }
+else { print("Grade: C"); }
 
-// Conditional logic
-if (num1 > num2) {
-    print(num1, " is greater than ", num2);
-} else if (num1 < num2) {
-    print(num1, " is less than ", num2);
-} else {
-    print(num1, " equals ", num2);
+// ── Loop ───────────────────────────────────────────────
+let i: int = 1;
+while (i <= 5) {
+    print("  ", i, " * ", i, " = ", i * i);
+    i = i + 1;
 }
 
-// Loop example
-print("Counting down from ", num1, ":");
-let countdown: int = num1;
-while (countdown > num1 - 5) {
-    print(countdown);
-    countdown = countdown - 1;
-}
+// ── Pipe operator ──────────────────────────────────────
+6 |> (x -> x * 2) |> (x -> x + 10) |> print();   // 22
 
-// Demonstrate pipe operator (passes value as first argument)
-print("Using pipe operator:");
-5 |> print();  // Same as print(5)
+// ── Lambdas and closures ───────────────────────────────
+let threshold: int = 50;
+let above_threshold = (x -> x > threshold);
+print("75 above threshold? ", above_threshold(75));
+print("30 above threshold? ", above_threshold(30));
+
+let double = (x -> x * 2);
+let add_one = (x -> x + 1);
+10 |> double |> add_one |> print();   // 21

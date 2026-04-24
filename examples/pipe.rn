@@ -1,0 +1,16 @@
+// Pipe operator |> passes the left value as the first argument to the right.
+// Makes chains of operations read left to right instead of inside out.
+
+// Basic pipe to print
+10 |> print();
+
+// Pipe into a lambda
+let result: int = 5;
+result |> (x -> x * 2) |> print();   // 10
+
+// Multi-step chain: (10 + 5) * 2 = 30
+let value: int = 10;
+value |> (x -> x + 5) |> (x -> x * 2) |> print();
+
+// Compare: same thing without pipe (harder to read)
+print(((10 + 5) * 2));
