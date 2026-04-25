@@ -1,0 +1,12 @@
+let x: int = 42;
+let name: string = "Alice";
+let flag: bool = true;
+print(x);
+print(name);
+print(flag);
+x = x + 1;
+print(x);
+{
+    let y: int = 99;
+    print(y);
+}

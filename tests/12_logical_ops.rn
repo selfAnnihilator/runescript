@@ -1,0 +1,11 @@
+print(true && true);
+print(true && false);
+print(false || true);
+print(false || false);
+print(!true);
+print(!false);
+
+let x: int = 5;
+print(x > 3 && x < 10);
+print(x < 0 || x > 3);
+print(!(x == 5));

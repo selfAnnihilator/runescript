@@ -1,0 +1,10 @@
+let double = (x -> x * 2);
+let square = (x -> x * x);
+let add = (a, b -> a + b);
+
+print(double(7));
+print(square(6));
+print(add(3, 4));
+
+5 |> double |> print();
+3 |> (x -> x * x) |> (x -> x + 1) |> print();

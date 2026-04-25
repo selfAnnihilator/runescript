@@ -245,7 +245,7 @@ sealed interface Expr permits
 
 // Statement AST nodes
 sealed interface Stmt permits
-    Stmt.Block, Stmt.Expression, Stmt.Function, Stmt.If, Stmt.Print,
+    Stmt.Block, Stmt.Expression, Stmt.For, Stmt.Function, Stmt.If, Stmt.Print,
     Stmt.Return, Stmt.Var, Stmt.While, Stmt.Assign {
 
     record Block(List<Stmt> statements) implements Stmt {}
@@ -262,6 +262,8 @@ sealed interface Stmt permits
     record Return(Token keyword, Expr value) implements Stmt {}
 
     record Var(Token name, Token type, Expr initializer) implements Stmt {}
+
+    record For(Stmt initializer, Expr condition, Stmt increment, Stmt body) implements Stmt {}
 
     record While(Expr condition, Stmt body) implements Stmt {}
 
@@ -593,6 +595,7 @@ class Parser {
 
     private Stmt statement() {
         if (match(TokenType.IF)) return ifStatement();
+        if (match(TokenType.FOR)) return forStatement();
         if (match(TokenType.WHILE)) return whileStatement();
         if (match(TokenType.RETURN)) return returnStatement();
         if (match(TokenType.LEFT_BRACE)) return new Stmt.Block(block());
@@ -622,6 +625,34 @@ class Parser {
         }
 
         return new Stmt.If(condition, thenBranch, elseBranch);
+    }
+
+    private Stmt forStatement() {
+        consume(TokenType.LEFT_PAREN, "Expected '(' after 'for'.");
+
+        Stmt initializer;
+        if (match(TokenType.SEMICOLON)) {
+            initializer = null;
+        } else if (match(TokenType.LET)) {
+            initializer = varDeclaration();
+        } else {
+            initializer = expressionStatement();
+        }
+
+        Expr condition = null;
+        if (!check(TokenType.SEMICOLON)) {
+            condition = expression();
+        }
+        consume(TokenType.SEMICOLON, "Expected ';' after for condition.");
+
+        Stmt increment = null;
+        if (!check(TokenType.RIGHT_PAREN)) {
+            increment = new Stmt.Expression(expression());
+        }
+        consume(TokenType.RIGHT_PAREN, "Expected ')' after for clauses.");
+
+        Stmt body = statement();
+        return new Stmt.For(initializer, condition, increment, body);
     }
 
     private Stmt whileStatement() {
@@ -837,28 +868,32 @@ class Parser {
     }
 
     // Look-ahead to determine if '(' starts a lambda rather than a grouped expr.
-    // A lambda looks like: (identifier -> ...) or (identifier, identifier -> ...)
+    // Lambdas: (-> body) or (param, ... -> body)
     private boolean isLambdaStart() {
         int saved = current;
-        boolean result = false;
+        if (check(TokenType.ARROW)) { return true; } // zero-param lambda
         if (check(TokenType.IDENTIFIER)) {
             advance();
             while (match(TokenType.COMMA)) {
-                if (!check(TokenType.IDENTIFIER)) { result = false; current = saved; return false; }
+                if (!check(TokenType.IDENTIFIER)) { current = saved; return false; }
                 advance();
             }
-            result = check(TokenType.ARROW);
+            boolean result = check(TokenType.ARROW);
+            current = saved;
+            return result;
         }
         current = saved;
-        return result;
+        return false;
     }
 
-    // Parse (param, ... -> body_expr) — '(' already consumed.
+    // Parse (-> body_expr) or (param, ... -> body_expr) — '(' already consumed.
     private Expr parseLambda() {
         List<Token> params = new ArrayList<>();
-        params.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
-        while (match(TokenType.COMMA)) {
+        if (!check(TokenType.ARROW)) {
             params.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
+            while (match(TokenType.COMMA)) {
+                params.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
+            }
         }
         consume(TokenType.ARROW, "Expected '->' in lambda.");
         Expr body = expression();
@@ -1018,6 +1053,18 @@ class Resolver {
             if (ifStmt.elseBranch() != null) {
                 resolve(ifStmt.elseBranch());
             }
+        } else if (stmt instanceof Stmt.For forStmt) {
+            beginScope();
+            if (forStmt.initializer() != null) resolve(forStmt.initializer());
+            if (forStmt.condition() != null) {
+                Type conditionType = resolve(forStmt.condition());
+                if (!(conditionType instanceof Type.BoolType)) {
+                    error(forStmt.condition(), "For condition must be boolean.");
+                }
+            }
+            if (forStmt.increment() != null) resolve(forStmt.increment());
+            resolve(forStmt.body());
+            endScope();
         } else if (stmt instanceof Stmt.While whileStmt) {
             Type conditionType = resolve(whileStmt.condition());
             if (!(conditionType instanceof Type.BoolType)) {
@@ -1318,7 +1365,8 @@ sealed interface Instruction permits
     Instruction.Pop, Instruction.GetLocal, Instruction.SetLocal,
     Instruction.Return, Instruction.Not,
     Instruction.MakeLambda, Instruction.Call,
-    Instruction.Len, Instruction.Substr {
+    Instruction.Len, Instruction.Substr,
+    Instruction.CaptureUpvalue, Instruction.GetUpvalue, Instruction.SetUpvalue {
 
     enum OpCode {
         CONSTANT,
@@ -1339,7 +1387,10 @@ sealed interface Instruction permits
         MAKE_ARRAY,
         GET_INDEX,
         SET_INDEX,
-        PUSH_ARR
+        PUSH_ARR,
+        CAPTURE_UPVALUE,
+        GET_UPVALUE,
+        SET_UPVALUE
     }
 
     record Constant(int constantIndex) implements Instruction {}
@@ -1368,6 +1419,9 @@ sealed interface Instruction permits
     record Len() implements Instruction {}
     record Substr() implements Instruction {}
     record Call(int argCount) implements Instruction {}
+    record CaptureUpvalue(int slot) implements Instruction {}
+    record GetUpvalue(int index) implements Instruction {}
+    record SetUpvalue(int index) implements Instruction {}
 }
 
 // Template stored in the constant pool; carries AST + captured variable names.
@@ -1421,6 +1475,13 @@ class LambdaValue {
     public String toString() {
         return "<fn(" + String.join(", ", params) + ")>";
     }
+}
+
+// Mutable reference box for by-reference upvalue capture.
+class UpvalueObj {
+    Object value;
+    UpvalueObj(Object v) { this.value = v; }
+    @Override public String toString() { return value == null ? "null" : value.toString(); }
 }
 
 // Chunk class to hold bytecode and constants
@@ -1585,6 +1646,20 @@ class BytecodeEmitter {
                 compileStmt(ifStmt.elseBranch());
             }
             patchJump(elseJump);
+        } else if (stmt instanceof Stmt.For forStmt) {
+            beginScope();
+            if (forStmt.initializer() != null) compileStmt(forStmt.initializer());
+            int loopStart = chunk.codeSize();
+            int exitJump = -1;
+            if (forStmt.condition() != null) {
+                visitExpression(forStmt.condition());
+                exitJump = emitJump(Instruction.OpCode.JUMP_IF_FALSE.ordinal(), 0);
+            }
+            compileStmt(forStmt.body());
+            if (forStmt.increment() != null) compileStmt(forStmt.increment());
+            emitLoop(loopStart, 0);
+            if (exitJump != -1) patchJump(exitJump);
+            endScope(0);
         } else if (stmt instanceof Stmt.While whileStmt) {
             int loopStart = chunk.codeSize();
             visitExpression(whileStmt.condition());
@@ -1602,6 +1677,10 @@ class BytecodeEmitter {
             emit((byte)Instruction.OpCode.POP.ordinal(), 0);
         } else if (stmt instanceof Stmt.Function funStmt) {
             List<String> params = funStmt.params().stream().map(Token::lexeme).toList();
+            for (int i = 0; i < localCount; i++) {
+                emit((byte)Instruction.OpCode.CAPTURE_UPVALUE.ordinal(), funStmt.name().line());
+                emitShort(i, funStmt.name().line());
+            }
             LambdaTemplate template = new LambdaTemplate(
                 params, funStmt.body(), new ArrayList<>(localNames), funStmt.name().lexeme());
             int idx = addConstant(template);
@@ -1741,9 +1820,13 @@ class BytecodeEmitter {
         }
     }
 
-    // Emit MAKE_LAMBDA: captures all currently-in-scope locals at runtime.
+    // Emit CAPTURE_UPVALUE for each current local, then MAKE_LAMBDA.
     private void visitLambda(Expr.Lambda lambda) {
         List<String> params = lambda.params().stream().map(Token::lexeme).toList();
+        for (int i = 0; i < localCount; i++) {
+            emit((byte)Instruction.OpCode.CAPTURE_UPVALUE.ordinal(), 0);
+            emitShort(i, 0);
+        }
         LambdaTemplate template = new LambdaTemplate(params, lambda.body(), new ArrayList<>(localNames));
         int idx = addConstant(template);
         emit((byte)Instruction.OpCode.MAKE_LAMBDA.ordinal(), 0);
@@ -1905,6 +1988,9 @@ class VM {
                     case GET_INDEX: getIndex(); break;
                     case SET_INDEX: setIndex(); break;
                     case PUSH_ARR: pushArr(); break;
+                    case CAPTURE_UPVALUE: captureUpvalue(); break;
+                    case GET_UPVALUE: getUpvalue(); break;
+                    case SET_UPVALUE: setUpvalue(); break;
                     default:
                         throw new RuntimeError("Unknown opcode: " + instruction);
                 }
@@ -2092,11 +2178,30 @@ class VM {
     }
 
     private void getLocal() {
-        push(stack[readShortUnsigned()]);
+        Object v = stack[readShortUnsigned()];
+        push(v instanceof UpvalueObj u ? u.value : v);
     }
 
     private void setLocal() {
-        stack[readShortUnsigned()] = peek(0);
+        int slot = readShortUnsigned();
+        if (stack[slot] instanceof UpvalueObj u) u.value = peek(0);
+        else stack[slot] = peek(0);
+    }
+
+    private void captureUpvalue() {
+        int slot = readShortUnsigned();
+        if (!(stack[slot] instanceof UpvalueObj)) {
+            stack[slot] = new UpvalueObj(stack[slot]);
+        }
+    }
+
+    private void getUpvalue() {
+        // Reserved for when lambda bodies compile to bytecode.
+        throw new RuntimeError("GET_UPVALUE not yet supported.");
+    }
+
+    private void setUpvalue() {
+        throw new RuntimeError("SET_UPVALUE not yet supported.");
     }
 
     private void jumpIfFalse() {
@@ -2131,14 +2236,20 @@ class VM {
     private void makeLambda() {
         LambdaTemplate template = (LambdaTemplate) chunk.constantAt(readShortUnsigned());
         Map<String, Object> captured = new HashMap<>();
+        // Stack slots were boxed by CAPTURE_UPVALUE; store UpvalueObj references directly.
         for (int i = 0; i < template.capturedNames.size() && i < stackPointer; i++) {
-            captured.put(template.capturedNames.get(i), stack[i]);
+            Object slot = stack[i];
+            captured.put(template.capturedNames.get(i),
+                slot instanceof UpvalueObj ? slot : new UpvalueObj(slot));
         }
         LambdaValue lv;
         if (template.stmtBody != null) {
             lv = new LambdaValue(template.params, template.stmtBody, captured);
-            // Self-inject so the function can call itself recursively.
-            if (template.selfName != null) captured.put(template.selfName, lv);
+            // Self-inject via UpvalueObj so recursive calls go through the same box.
+            if (template.selfName != null) {
+                UpvalueObj selfBox = new UpvalueObj(lv);
+                captured.put(template.selfName, selfBox);
+            }
         } else {
             lv = new LambdaValue(template.params, template.body, captured);
         }
@@ -2185,7 +2296,10 @@ class VM {
             Object val = varStmt.initializer() != null ? evaluate(varStmt.initializer(), env) : null;
             env.put(varStmt.name().lexeme(), val);
         } else if (stmt instanceof Stmt.Assign assignStmt) {
-            env.put(assignStmt.name().lexeme(), evaluate(assignStmt.value(), env));
+            Object val = evaluate(assignStmt.value(), env);
+            Object existing = env.get(assignStmt.name().lexeme());
+            if (existing instanceof UpvalueObj u) u.value = val;
+            else env.put(assignStmt.name().lexeme(), val);
         } else if (stmt instanceof Stmt.Return retStmt) {
             Object val = retStmt.value() != null ? evaluate(retStmt.value(), env) : null;
             throw new ReturnValue(val);
@@ -2195,6 +2309,20 @@ class VM {
                 executeStmt(ifStmt.thenBranch(), env);
             } else if (ifStmt.elseBranch() != null) {
                 executeStmt(ifStmt.elseBranch(), env);
+            }
+        } else if (stmt instanceof Stmt.For forStmt) {
+            Map<String, Object> forEnv = new HashMap<>(env);
+            if (forStmt.initializer() != null) executeStmt(forStmt.initializer(), forEnv);
+            while (true) {
+                if (forStmt.condition() != null) {
+                    Object cond = evaluate(forStmt.condition(), forEnv);
+                    if (!(cond instanceof Boolean b && b)) break;
+                }
+                executeStmt(forStmt.body(), forEnv);
+                if (forStmt.increment() != null) executeStmt(forStmt.increment(), forEnv);
+            }
+            for (String key : env.keySet()) {
+                if (forEnv.containsKey(key)) env.put(key, forEnv.get(key));
             }
         } else if (stmt instanceof Stmt.While whileStmt) {
             while (true) {
@@ -2230,12 +2358,15 @@ class VM {
             String name = var.name().lexeme();
             if (!env.containsKey(name))
                 throw new RuntimeError("Undefined variable '" + name + "' in lambda body.");
-            return env.get(name);
+            Object v = env.get(name);
+            return v instanceof UpvalueObj u ? u.value : v;
         }
         if (expr instanceof Expr.Grouping g) return evaluate(g.expression(), env);
         if (expr instanceof Expr.Assign asgn) {
             Object val = evaluate(asgn.value(), env);
-            env.put(asgn.name().lexeme(), val);
+            Object existing = env.get(asgn.name().lexeme());
+            if (existing instanceof UpvalueObj u) u.value = val;
+            else env.put(asgn.name().lexeme(), val);
             return val;
         }
         if (expr instanceof Expr.Unary u) {
@@ -2371,8 +2502,7 @@ class VM {
     }
 
     private void returnOp() {
-        Object result = stackPointer > 0 ? pop() : null;
-        System.out.println("Returned: " + result);
+        if (stackPointer > 0) pop();
     }
 }
 

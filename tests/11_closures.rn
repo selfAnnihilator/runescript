@@ -1,0 +1,10 @@
+let base: int = 10;
+let add_base = (x -> x + base);
+print(add_base(5));
+
+base = 999;
+print(add_base(5));
+
+let rate: int = 5;
+let apply_rate = (x -> x * rate / 100);
+print(apply_rate(200));

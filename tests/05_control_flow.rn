@@ -1,0 +1,17 @@
+let score: int = 85;
+if (score >= 90) {
+    print("A");
+} else if (score >= 80) {
+    print("B");
+} else if (score >= 70) {
+    print("C");
+} else {
+    print("F");
+}
+
+let x: int = 5;
+if (x == 5) { print("five"); }
+if (x != 5) { print("not five"); } else { print("still five"); }
+
+let b: bool = false;
+if (!b) { print("not false"); }

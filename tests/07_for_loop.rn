@@ -1,0 +1,15 @@
+for (let i: int = 0; i < 5; i = i + 1) {
+    print(i);
+}
+
+let sum: int = 0;
+for (let i: int = 1; i <= 10; i = i + 1) {
+    sum = sum + i;
+}
+print(sum);
+
+for (let i: int = 0; i < 3; i = i + 1) {
+    for (let j: int = 0; j < 3; j = j + 1) {
+        print(i * 3 + j);
+    }
+}

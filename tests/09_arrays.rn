@@ -1,0 +1,16 @@
+let nums: int[] = [1, 2, 3, 4, 5];
+print(len(nums));
+print(nums[0]);
+print(nums[4]);
+push(nums, 6);
+print(len(nums));
+print(nums[5]);
+
+let words: string[] = ["hello", "world"];
+print(words[0] + " " + words[1]);
+
+let sum: int = 0;
+for (let i: int = 0; i < len(nums); i = i + 1) {
+    sum = sum + nums[i];
+}
+print(sum);

@@ -106,3 +106,83 @@ Phased roadmap to address current limitations. Each phase is self-contained and 
 | 6.2 | Full-pipeline error collection | Medium | 6.1 | ✅
 
 **Recommended order:** 1.1 → 1.2 → 4.1 → 2.1 → 2.2 → 6.1 → 6.2 → 3.1 → 3.2 → 5.1 → 5.2
+
+---
+
+## Phase 7 — For Loop ✅
+
+### 7.1 `for` loop ✅
+- Add `FOR` token; syntax: `for (init; condition; increment) { body }`
+- Add `Stmt.For` AST node (initializer, condition, increment, body)
+- Parser: parse `for` with optional init/condition/increment (like C-style for)
+- Resolver: resolve each part in its own scope
+- Emitter: compile as `init → [condition → JUMP_IF_FALSE exit → body → increment → LOOP]`
+- No new opcodes needed — reuse `JUMP_IF_FALSE`, `JUMP`, `LOOP`
+
+---
+
+## Phase 8 — Closures ✅
+
+### 8.1 Upvalue capture ✅
+- Add `Upvalue` concept: lambdas/functions capture variables from enclosing scopes by reference
+- Add `Expr.Upvalue` or `upvalueIndex` field on `LambdaTemplate`
+- Resolver: when a variable is referenced inside a lambda but declared outside, mark it as an upvalue
+- Emitter: emit `CAPTURE_UPVALUE` for each captured variable; store upvalue list on `LambdaValue`
+- VM: `MAKE_LAMBDA` closes over current stack slots into `UpvalueObj`; `GET_UPVALUE` / `SET_UPVALUE` opcodes
+
+---
+
+## Phase 9 — Structs
+
+### 9.1 Struct declarations
+- Add `STRUCT` token; syntax: `struct Point { x: int, y: int }`
+- Add `Stmt.Struct` AST node (name, fields map)
+- Resolver: register struct type; field access (`p.x`) resolves to field type
+- Emitter/VM: structs stored as `HashMap<String, Object>`; new opcodes `MAKE_STRUCT`, `GET_FIELD`, `SET_FIELD`
+
+### 9.2 Struct instantiation and field access
+- Syntax: `let p: Point = Point { x: 1, y: 2 };`
+- Add `Expr.StructLiteral` and `Expr.FieldAccess` AST nodes
+- Resolver: verify field names and types match struct declaration
+- VM: `MAKE_STRUCT` pops N field values and builds the map
+
+---
+
+## Phase 10 — Test Suite ✅
+
+### 10.1 Integration tests (shell) ✅
+- Write a `tests/` directory with `.rune` source files and corresponding `.expected` output files
+- Write a `run_tests.sh` script: compile + run each `.rune` file, diff actual vs expected output
+- Cover: variables, control flow, functions, arrays, strings, error cases
+
+### 10.2 Unit tests (Java) ✅
+- Add JUnit 5 dependency (or plain Java test runner)
+- Unit-test `Lexer` (token types, line/col tracking, error collection)
+- Unit-test `Parser` (AST shape for each construct)
+- Unit-test `Resolver` (type errors, scope errors)
+- Unit-test `VM` (arithmetic, stack correctness, runtime errors)
+
+---
+
+## Phase 11 — Cleanup ✅
+
+### 11.1 Remove duplicate root-level source files ✅
+- Delete legacy `.java` files in the project root (`VM.java`, `Lexer.java`, `Parser.java`, `Resolver.java`, `BytecodeEmitter.java`, `Chunk.java`, `Token.java`, `Type.java`, `Instruction.java`, `ast.java`, `Interpreter.java`)
+- All active code lives in `src/RuneScript.java`; root files are stale copies from early development
+- Update build script / `Makefile` if paths reference root files
+
+---
+
+## Updated Summary
+
+| Phase | Feature | Difficulty | Depends on |
+|---|---|---|---|
+| 7.1 | `for` loop | Low | — | ✅
+| 8.1 | Closures / upvalues | High | 3.1, 3.2 | ✅
+| 9.1 | Struct declarations | Medium | — |
+| 9.2 | Struct instantiation + field access | Medium | 9.1 |
+| 10.1 | Integration tests (shell) | Low | — | ✅
+| 10.2 | Unit tests (Java / JUnit) | Medium | — | ✅
+| 11.1 | Remove duplicate root-level files | Low | — | ✅
+
+**Recommended order:** 7.1 → 11.1 → 10.1 → 10.2 → 8.1 → 9.1 → 9.2

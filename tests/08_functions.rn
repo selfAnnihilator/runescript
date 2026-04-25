@@ -1,0 +1,17 @@
+fun add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fun greet(name: string) -> string {
+    return "Hello, " + name;
+}
+
+fun factorial(n: int) -> int {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+print(add(3, 4));
+print(greet("Bob"));
+print(factorial(5));
+print(factorial(10));
