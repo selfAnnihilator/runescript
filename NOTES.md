@@ -280,6 +280,21 @@ When a lambda is called via the `CALL` instruction, the VM switches to a **tree-
 
 ---
 
+## Example Scripts
+
+The `examples/` folder contains standalone `.rn` programs, each focused on one concept:
+
+- **hello.rn** — the simplest possible program; shows basic `print` and string literals
+- **arithmetic.rn** — all arithmetic and comparison operators; demonstrates integer division and multi-argument print
+- **variables.rn** — declaring typed variables, reassignment, and block scoping (a variable declared inside `{}` does not exist outside it)
+- **control_flow.rn** — `if / else if / else` chains, `while` loops, and logical NOT (`!`)
+- **lambdas.rn** — defining anonymous functions, storing them in variables, calling them, single vs multi-parameter, boolean-returning lambdas
+- **closures.rn** — how lambdas capture outer variables at definition time (capture by value), and how changing the outer variable afterwards does not affect the already-captured closure
+- **pipe.rn** — the `|>` operator chaining values through a series of transformations left-to-right instead of nesting calls
+- **demo.rn** — everything together in one script: variables, arithmetic, control flow, loops, pipe chains, lambdas, and closures
+
+---
+
 ## Project Structure
 
 ```
@@ -287,10 +302,7 @@ runescript/
 ├── src/
 │   ├── RuneScript.java     ← the entire implementation (one file)
 │   └── runescript.jar      ← compiled and packaged JAR
-├── examples/
-│   ├── hello.rn
-│   ├── arithmetic.rn
-│   └── variables.rn
+├── examples/               ← sample .rn programs
 ├── docs/                   ← online documentation source
 ├── build.sh                ← build script (Linux/Mac)
 ├── build.bat               ← build script (Windows)
@@ -300,11 +312,72 @@ runescript/
 
 ### Building from source
 
+**Linux / Mac:**
 ```bash
 bash build.sh
 ```
 
-This compiles `src/RuneScript.java` and packages all `.class` files into `src/runescript.jar`.
+**Windows:**
+```bat
+build.bat
+```
+
+Both scripts compile `src/RuneScript.java` and package all `.class` files into `src/runescript.jar`. Java 21 or higher is required.
+
+---
+
+## Running Programs
+
+```bash
+# Run a script file
+java -jar src/runescript.jar examples/demo.rn
+
+# Start the interactive REPL
+java -jar src/runescript.jar
+```
+
+### REPL (interactive mode)
+
+When started with no arguments, RuneScript drops into a line-by-line prompt. Variable state persists across lines — a variable declared on one line is available on the next. This lets you experiment incrementally without writing a full file.
+
+```
+rune> let x: int = 10;
+rune> x = x + 5;
+rune> print(x);
+15
+```
+
+### Debug flags
+
+These flags pause the pipeline and print what the compiler is doing at that stage:
+
+```bash
+java -jar src/runescript.jar --emit-tokens program.rn
+```
+Prints every token the lexer produced — type, text, and line number. Useful for checking that the lexer is reading your syntax correctly.
+
+```bash
+java -jar src/runescript.jar --emit-ast program.rn
+```
+Prints the Abstract Syntax Tree — the structured representation of your program after parsing. Shows how the parser interpreted operator precedence and nesting.
+
+```bash
+java -jar src/runescript.jar --emit-bytecode program.rn
+```
+Prints the bytecode instructions generated for each statement. Shows exactly what the VM will execute, including stack operations, jump offsets, and constant indices.
+
+---
+
+## Current Limitations
+
+- **No named functions** — there is no `fun` or `def` keyword. Only lambdas (anonymous functions stored in variables) are supported.
+- **No `&&` / `||`** — logical AND and OR are not implemented. Use nested `if` statements instead.
+- **No arrays or collections** — only scalar values (`int`, `bool`, `string`).
+- **No string operations** — strings can be printed and stored but cannot be concatenated or manipulated.
+- **255-constant limit** — the constant pool and local variable slots use single bytes, so programs are limited to 255 unique constants and 255 local variables. Fine for learning programs.
+- **Jump range limit** — jump offsets are two-byte signed integers, limiting the distance a jump can span. Very long functions or deeply nested blocks could hit this ceiling.
+- **No error recovery** — the compiler stops at the first error. There is no attempt to continue and report multiple errors at once.
+- **Column numbers in errors** — errors report line numbers but not column positions within the line.
 
 ---
 

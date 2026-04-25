@@ -186,6 +186,7 @@ class Token {
 enum TokenType {
     // Single-character tokens
     LEFT_PAREN, RIGHT_PAREN, LEFT_BRACE, RIGHT_BRACE,
+    LEFT_BRACKET, RIGHT_BRACKET,
     COMMA, DOT, SEMICOLON, SLASH, STAR, COLON, PLUS, MINUS,
 
     // One or two character tokens
@@ -213,7 +214,8 @@ enum TokenType {
 sealed interface Expr permits
     Expr.Assign, Expr.Binary, Expr.Call, Expr.Grouping,
     Expr.Literal, Expr.Logical, Expr.Unary,
-    Expr.Variable, Expr.Pipe, Expr.Lambda {
+    Expr.Variable, Expr.Pipe, Expr.Lambda,
+    Expr.ArrayLiteral, Expr.Index {
 
     record Assign(Token name, Expr value) implements Expr {}
 
@@ -235,20 +237,29 @@ sealed interface Expr permits
 
     // (param, param -> body_expr)
     record Lambda(List<Token> params, Expr body) implements Expr {}
+
+    record ArrayLiteral(List<Expr> elements, Token bracket) implements Expr {}
+
+    record Index(Expr array, Token bracket, Expr index) implements Expr {}
 }
 
 // Statement AST nodes
 sealed interface Stmt permits
-    Stmt.Block, Stmt.Expression, Stmt.If, Stmt.Print,
-    Stmt.Var, Stmt.While, Stmt.Assign {
+    Stmt.Block, Stmt.Expression, Stmt.Function, Stmt.If, Stmt.Print,
+    Stmt.Return, Stmt.Var, Stmt.While, Stmt.Assign {
 
     record Block(List<Stmt> statements) implements Stmt {}
 
     record Expression(Expr expression) implements Stmt {}
 
+    record Function(Token name, List<Token> params, List<Token> paramTypes,
+                    Token returnType, List<Stmt> body) implements Stmt {}
+
     record If(Expr condition, Stmt thenBranch, Stmt elseBranch) implements Stmt {}
 
     record Print(Expr expression) implements Stmt {}
+
+    record Return(Token keyword, Expr value) implements Stmt {}
 
     record Var(Token name, Token type, Expr initializer) implements Stmt {}
 
@@ -261,11 +272,13 @@ sealed interface Stmt permits
 class Lexer {
     private final String source;
     private final List<Token> tokens = new ArrayList<>();
+    private final List<String> errors = new ArrayList<>();
 
     private int start = 0;
     private int current = 0;
     private int line = 1;
     private int column = 0;
+    private int startColumn = 0;
 
     private static final Map<String, TokenType> keywords = new HashMap<>();
 
@@ -298,10 +311,14 @@ class Lexer {
         this.source = source;
     }
 
+    public List<String> getErrors() {
+        return errors;
+    }
+
     public List<Token> scanTokens() {
         while (!isAtEnd()) {
-            // We are at the beginning of the next lexeme
             start = current;
+            startColumn = column;
             scanToken();
         }
 
@@ -316,6 +333,8 @@ class Lexer {
             case ')': addToken(TokenType.RIGHT_PAREN); break;
             case '{': addToken(TokenType.LEFT_BRACE); break;
             case '}': addToken(TokenType.RIGHT_BRACE); break;
+            case '[': addToken(TokenType.LEFT_BRACKET); break;
+            case ']': addToken(TokenType.RIGHT_BRACKET); break;
             case ',': addToken(TokenType.COMMA); break;
             case '.': addToken(TokenType.DOT); break;
             case ';': addToken(TokenType.SEMICOLON); break;
@@ -338,13 +357,14 @@ class Lexer {
             case '>':
                 addToken(match('=') ? TokenType.GREATER_EQUAL : TokenType.GREATER);
                 break;
+            case '&':
+                if (match('&')) addToken(TokenType.AND);
+                else errors.add("[line " + line + ", col " + column + "] Error: Unexpected character: &");
+                break;
             case '|':
-                if (match('>')) {
-                    addToken(TokenType.PIPE_ARROW);
-                } else {
-                    // Report error for unexpected pipe character
-                    System.err.println("Unexpected character: |");
-                }
+                if (match('>')) addToken(TokenType.PIPE_ARROW);
+                else if (match('|')) addToken(TokenType.OR);
+                else errors.add("[line " + line + ", col " + column + "] Error: Unexpected character: |");
                 break;
 
             case '/':
@@ -378,7 +398,7 @@ class Lexer {
                 } else if (isAlpha(c)) {
                     identifier();
                 } else {
-                    System.err.println("Unexpected character: " + c);
+                    errors.add("[line " + line + ", col " + column + "] Error: Unexpected character: '" + c + "'");
                 }
                 break;
         }
@@ -418,7 +438,8 @@ class Lexer {
         }
 
         if (isAtEnd()) {
-            System.err.println("Unterminated string.");
+            errors.add("[line " + line + ", col " + column + "] Error: Unterminated string.");
+            return;
         }
 
         // The closing ".
@@ -478,7 +499,7 @@ class Lexer {
 
     private void addToken(TokenType type, Object literal) {
         String text = source.substring(start, current);
-        tokens.add(new Token(type, text, literal, line, column));
+        tokens.add(new Token(type, text, literal, line, startColumn + 1));
     }
 }
 
@@ -488,9 +509,14 @@ class Parser {
 
     private final List<Token> tokens;
     private int current = 0;
+    private final List<String> errors = new ArrayList<>();
 
     public Parser(List<Token> tokens) {
         this.tokens = tokens;
+    }
+
+    public List<String> getErrors() {
+        return errors;
     }
 
     public List<Stmt> parse() {
@@ -508,6 +534,7 @@ class Parser {
     private Stmt declaration() {
         try {
             if (match(TokenType.LET)) return varDeclaration();
+            if (match(TokenType.FUN)) return funDeclaration();
 
             return statement();
         } catch (ParseError error) {
@@ -516,12 +543,45 @@ class Parser {
         }
     }
 
+    private Stmt funDeclaration() {
+        Token name = consume(TokenType.IDENTIFIER, "Expected function name.");
+        consume(TokenType.LEFT_PAREN, "Expected '(' after function name.");
+        List<Token> params = new ArrayList<>();
+        List<Token> paramTypes = new ArrayList<>();
+        if (!check(TokenType.RIGHT_PAREN)) {
+            do {
+                params.add(consume(TokenType.IDENTIFIER, "Expected parameter name."));
+                consume(TokenType.COLON, "Expected ':' after parameter name.");
+                Token ptype = consume(TokenType.IDENTIFIER, "Expected parameter type.");
+                if (match(TokenType.LEFT_BRACKET)) {
+                    consume(TokenType.RIGHT_BRACKET, "Expected ']' after '['.");
+                    ptype = new Token(TokenType.IDENTIFIER, ptype.lexeme() + "[]", null, ptype.line(), ptype.column());
+                }
+                paramTypes.add(ptype);
+            } while (match(TokenType.COMMA));
+        }
+        consume(TokenType.RIGHT_PAREN, "Expected ')' after parameters.");
+        consume(TokenType.ARROW, "Expected '->' after parameters.");
+        Token returnType = consume(TokenType.IDENTIFIER, "Expected return type.");
+        if (match(TokenType.LEFT_BRACKET)) {
+            consume(TokenType.RIGHT_BRACKET, "Expected ']' after '['.");
+            returnType = new Token(TokenType.IDENTIFIER, returnType.lexeme() + "[]", null, returnType.line(), returnType.column());
+        }
+        consume(TokenType.LEFT_BRACE, "Expected '{' before function body.");
+        List<Stmt> body = block();
+        return new Stmt.Function(name, params, paramTypes, returnType, body);
+    }
+
     private Stmt varDeclaration() {
         Token name = consume(TokenType.IDENTIFIER, "Expected variable name.");
         Token type = null;
 
         if (match(TokenType.COLON)) {
             type = consume(TokenType.IDENTIFIER, "Expected type name (int, bool, string).");
+            if (match(TokenType.LEFT_BRACKET)) {
+                consume(TokenType.RIGHT_BRACKET, "Expected ']' after '['.");
+                type = new Token(TokenType.IDENTIFIER, type.lexeme() + "[]", null, type.line(), type.column());
+            }
         }
 
         consume(TokenType.EQUAL, "Expected '=' after variable name.");
@@ -534,10 +594,20 @@ class Parser {
     private Stmt statement() {
         if (match(TokenType.IF)) return ifStatement();
         if (match(TokenType.WHILE)) return whileStatement();
+        if (match(TokenType.RETURN)) return returnStatement();
         if (match(TokenType.LEFT_BRACE)) return new Stmt.Block(block());
-        // Removed explicit print statement to allow print() as function call
 
         return expressionStatement();
+    }
+
+    private Stmt returnStatement() {
+        Token keyword = previous();
+        Expr value = null;
+        if (!check(TokenType.SEMICOLON)) {
+            value = expression();
+        }
+        consume(TokenType.SEMICOLON, "Expected ';' after return value.");
+        return new Stmt.Return(keyword, value);
     }
 
     private Stmt ifStatement() {
@@ -607,7 +677,7 @@ class Parser {
     }
 
     private Expr pipe() {
-        Expr expr = equality();
+        Expr expr = or();
 
         while (match(TokenType.PIPE_ARROW)) {
             Token pipeArrow = previous();
@@ -616,6 +686,26 @@ class Parser {
             expr = new Expr.Pipe(expr, call);
         }
 
+        return expr;
+    }
+
+    private Expr or() {
+        Expr expr = and();
+        while (match(TokenType.OR)) {
+            Token op = previous();
+            Expr right = and();
+            expr = new Expr.Logical(expr, op, right);
+        }
+        return expr;
+    }
+
+    private Expr and() {
+        Expr expr = equality();
+        while (match(TokenType.AND)) {
+            Token op = previous();
+            Expr right = equality();
+            expr = new Expr.Logical(expr, op, right);
+        }
         return expr;
     }
 
@@ -683,6 +773,11 @@ class Parser {
         while (true) {
             if (match(TokenType.LEFT_PAREN)) {
                 expr = finishCall(expr);
+            } else if (match(TokenType.LEFT_BRACKET)) {
+                Token bracket = previous();
+                Expr index = expression();
+                consume(TokenType.RIGHT_BRACKET, "Expected ']' after index.");
+                expr = new Expr.Index(expr, bracket, index);
             } else {
                 break;
             }
@@ -724,6 +819,18 @@ class Parser {
             Expr expr = expression();
             consume(TokenType.RIGHT_PAREN, "Expected ')' after expression.");
             return new Expr.Grouping(expr);
+        }
+
+        if (match(TokenType.LEFT_BRACKET)) {
+            Token bracket = previous();
+            List<Expr> elements = new ArrayList<>();
+            if (!check(TokenType.RIGHT_BRACKET)) {
+                do {
+                    elements.add(expression());
+                } while (match(TokenType.COMMA));
+            }
+            consume(TokenType.RIGHT_BRACKET, "Expected ']' after array elements.");
+            return new Expr.ArrayLiteral(elements, bracket);
         }
 
         throw error(peek(), "Expected expression.");
@@ -799,7 +906,7 @@ class Parser {
     }
 
     private ParseError error(Token token, String message) {
-        System.err.println("[line " + token.line() + "] Error " + message);
+        errors.add("[line " + token.line() + ", col " + token.column() + "] Error: " + message);
         return new ParseError();
     }
 
@@ -810,7 +917,7 @@ class Parser {
             if (previous().type() == TokenType.SEMICOLON) return;
 
             switch (peek().type()) {
-                case CLASS, FUN, VAR, FOR, IF, WHILE, RETURN:
+                case CLASS, FUN, VAR, FOR, IF, WHILE, RETURN, LET, RIGHT_BRACE:
                     return;
             }
 
@@ -821,19 +928,29 @@ class Parser {
 
 // Type system
 sealed interface Type permits
-    Type.IntType, Type.BoolType, Type.StringType, Type.NilType, Type.ErrorType {
+    Type.IntType, Type.BoolType, Type.StringType, Type.NilType,
+    Type.ErrorType, Type.FunctionType, Type.ArrayType {
 
-    record IntType() implements Type {}
-    record BoolType() implements Type {}
-    record StringType() implements Type {}
-    record NilType() implements Type {}
-    record ErrorType() implements Type {}
+    record IntType() implements Type { public String toString() { return "int"; } }
+    record BoolType() implements Type { public String toString() { return "bool"; } }
+    record StringType() implements Type { public String toString() { return "string"; } }
+    record NilType() implements Type { public String toString() { return "nil"; } }
+    record ErrorType() implements Type { public String toString() { return "<error>"; } }
+    record FunctionType(List<Type> paramTypes, Type returnType) implements Type {
+        public String toString() { return "<fn>"; }
+    }
+    record ArrayType(Type element) implements Type {
+        public String toString() { return element + "[]"; }
+    }
 
     static Type fromString(String typeName) {
         return switch (typeName) {
-            case "int" -> new Type.IntType();
-            case "bool" -> new Type.BoolType();
-            case "string" -> new Type.StringType();
+            case "int"      -> new Type.IntType();
+            case "bool"     -> new Type.BoolType();
+            case "string"   -> new Type.StringType();
+            case "int[]"    -> new Type.ArrayType(new Type.IntType());
+            case "bool[]"   -> new Type.ArrayType(new Type.BoolType());
+            case "string[]" -> new Type.ArrayType(new Type.StringType());
             default -> new Type.ErrorType();
         };
     }
@@ -847,9 +964,15 @@ sealed interface Type permits
 class Resolver {
     private final RuneScriptInterpreter interpreter;
     private final Stack<Map<String, Type>> scopes = new Stack<>();
+    private final List<String> errors = new ArrayList<>();
+    private Type currentReturnType = null;
 
     public Resolver(RuneScriptInterpreter interpreter) {
         this.interpreter = interpreter;
+    }
+
+    public List<String> getErrors() {
+        return errors;
     }
 
     public void resolve(List<Stmt> statements) {
@@ -909,6 +1032,34 @@ class Resolver {
             endScope();
         } else if (stmt instanceof Stmt.Print printStmt) {
             resolve(printStmt.expression());
+        } else if (stmt instanceof Stmt.Function funStmt) {
+            List<Type> paramTypes = funStmt.paramTypes().stream()
+                .map(t -> Type.fromString(t.lexeme())).toList();
+            Type retType = Type.fromString(funStmt.returnType().lexeme());
+            Type.FunctionType fnType = new Type.FunctionType(paramTypes, retType);
+            declare(funStmt.name(), fnType);
+            assign(funStmt.name(), fnType);
+            Type savedReturnType = currentReturnType;
+            currentReturnType = Type.fromString(funStmt.returnType().lexeme());
+            beginScope();
+            for (int i = 0; i < funStmt.params().size(); i++) {
+                Type paramType = Type.fromString(funStmt.paramTypes().get(i).lexeme());
+                declare(funStmt.params().get(i), paramType);
+                assign(funStmt.params().get(i), paramType);
+            }
+            for (Stmt s : funStmt.body()) resolve(s);
+            endScope();
+            currentReturnType = savedReturnType;
+        } else if (stmt instanceof Stmt.Return retStmt) {
+            if (currentReturnType == null) {
+                error(retStmt.keyword(), "Cannot use 'return' outside a function.");
+            } else if (retStmt.value() != null) {
+                Type valueType = resolve(retStmt.value());
+                if (!isCompatible(currentReturnType, valueType)) {
+                    error(retStmt.keyword(), "Expected return type " + currentReturnType +
+                          " but got " + valueType + ".");
+                }
+            }
         }
     }
 
@@ -932,6 +1083,10 @@ class Resolver {
             TokenType op = binExpr.operator().type();
 
             if (isArithmeticOperator(op)) {
+                if (op == TokenType.PLUS &&
+                    (leftType instanceof Type.StringType || rightType instanceof Type.StringType)) {
+                    return new Type.StringType();
+                }
                 if (!(leftType instanceof Type.IntType) ||
                     !(rightType instanceof Type.IntType)) {
                     error(binExpr.operator(), "Operands must be integers.");
@@ -985,20 +1140,72 @@ class Resolver {
             } else {
                 return new Type.ErrorType();
             }
+        } else if (expr instanceof Expr.Logical logExpr) {
+            Type leftType = resolve(logExpr.left());
+            Type rightType = resolve(logExpr.right());
+            if (!(leftType instanceof Type.BoolType) || !(rightType instanceof Type.BoolType)) {
+                error(logExpr.operator(), "Operands of '&&'/'||' must both be boolean.");
+                return new Type.ErrorType();
+            }
+            return new Type.BoolType();
         } else if (expr instanceof Expr.Grouping groupExpr) {
             return resolve(groupExpr.expression());
         } else if (expr instanceof Expr.Lambda lambdaExpr) {
             // Don't deeply type-check lambda bodies; just return a function type placeholder.
             return new Type.NilType();
         } else if (expr instanceof Expr.Call callExpr) {
-            if (callExpr.callee() instanceof Expr.Variable var &&
-                var.name().lexeme().equals("print")) {
-                for (Expr arg : callExpr.arguments()) resolve(arg);
-                return new Type.NilType();
+            if (callExpr.callee() instanceof Expr.Variable var) {
+                String fname = var.name().lexeme();
+                if (fname.equals("print")) {
+                    for (Expr arg : callExpr.arguments()) resolve(arg);
+                    return new Type.NilType();
+                }
+                if (fname.equals("len")) {
+                    if (callExpr.arguments().size() != 1) {
+                        error(var.name(), "len() expects 1 argument.");
+                        return new Type.ErrorType();
+                    }
+                    Type argType = resolve(callExpr.arguments().get(0));
+                    if (!(argType instanceof Type.StringType) && !(argType instanceof Type.ArrayType)) {
+                        error(var.name(), "len() expects a string or array argument.");
+                        return new Type.ErrorType();
+                    }
+                    return new Type.IntType();
+                }
+                if (fname.equals("push")) {
+                    if (callExpr.arguments().size() != 2) {
+                        error(var.name(), "push() expects 2 arguments: push(arr, val).");
+                        return new Type.ErrorType();
+                    }
+                    Type arrType = resolve(callExpr.arguments().get(0));
+                    resolve(callExpr.arguments().get(1));
+                    if (!(arrType instanceof Type.ArrayType)) {
+                        error(var.name(), "push() expects an array as first argument.");
+                        return new Type.ErrorType();
+                    }
+                    return new Type.NilType();
+                }
+                if (fname.equals("substr")) {
+                    if (callExpr.arguments().size() != 3) {
+                        error(var.name(), "substr() expects 3 arguments: substr(s, start, end).");
+                        return new Type.ErrorType();
+                    }
+                    Type s     = resolve(callExpr.arguments().get(0));
+                    Type start = resolve(callExpr.arguments().get(1));
+                    Type end   = resolve(callExpr.arguments().get(2));
+                    if (!(s instanceof Type.StringType) ||
+                        !(start instanceof Type.IntType) ||
+                        !(end instanceof Type.IntType)) {
+                        error(var.name(), "substr(s, start, end) expects string, int, int.");
+                        return new Type.ErrorType();
+                    }
+                    return new Type.StringType();
+                }
             }
-            // Generic call — callee might be a lambda variable; resolve it but don't error.
-            resolve(callExpr.callee());
+            // Generic call: look up the callee; if it's a named function, return its return type.
+            Type calleeType = resolve(callExpr.callee());
             for (Expr arg : callExpr.arguments()) resolve(arg);
+            if (calleeType instanceof Type.FunctionType ft) return ft.returnType();
             return new Type.NilType();
         } else if (expr instanceof Expr.Pipe pipeExpr) {
             resolve(pipeExpr.value());
@@ -1010,6 +1217,29 @@ class Resolver {
                 resolve(rhs);
             }
             return new Type.NilType();
+        } else if (expr instanceof Expr.ArrayLiteral arrExpr) {
+            if (arrExpr.elements().isEmpty()) return new Type.ArrayType(new Type.NilType());
+            Type elemType = resolve(arrExpr.elements().get(0));
+            for (int i = 1; i < arrExpr.elements().size(); i++) {
+                Type t = resolve(arrExpr.elements().get(i));
+                if (!isCompatible(elemType, t)) {
+                    error(arrExpr.bracket(), "Array elements must have the same type.");
+                    return new Type.ErrorType();
+                }
+            }
+            return new Type.ArrayType(elemType);
+        } else if (expr instanceof Expr.Index idxExpr) {
+            Type arrayType = resolve(idxExpr.array());
+            Type indexType = resolve(idxExpr.index());
+            if (!(arrayType instanceof Type.ArrayType at)) {
+                error(idxExpr.bracket(), "Index operator requires an array.");
+                return new Type.ErrorType();
+            }
+            if (!(indexType instanceof Type.IntType)) {
+                error(idxExpr.bracket(), "Array index must be an integer.");
+                return new Type.ErrorType();
+            }
+            return at.element();
         }
 
         return new Type.ErrorType();
@@ -1068,18 +1298,12 @@ class Resolver {
     }
 
     private void error(Token token, String message) {
-        System.err.printf("[line %d] Error at '%s': %s%n",
-                         token.line(), token.lexeme(), message);
-        if (interpreter != null) {
-            interpreter.setError();
-        }
+        errors.add(String.format("[line %d, col %d] Error at '%s': %s",
+                                 token.line(), token.column(), token.lexeme(), message));
     }
 
     private void error(Expr expr, String message) {
-        System.err.printf("Error: %s%n", message);
-        if (interpreter != null) {
-            interpreter.setError();
-        }
+        errors.add("Error: " + message);
     }
 }
 
@@ -1089,22 +1313,33 @@ sealed interface Instruction permits
     Instruction.Multiply, Instruction.Divide, Instruction.Negate,
     Instruction.True, Instruction.False, Instruction.Nil,
     Instruction.Equal, Instruction.Greater, Instruction.Less,
-    Instruction.JumpIfFalse, Instruction.Jump, Instruction.Print,
+    Instruction.JumpIfFalse, Instruction.JumpIfFalseKeep,
+    Instruction.JumpIfTrueKeep, Instruction.Jump, Instruction.Print,
     Instruction.Pop, Instruction.GetLocal, Instruction.SetLocal,
     Instruction.Return, Instruction.Not,
-    Instruction.MakeLambda, Instruction.Call {
+    Instruction.MakeLambda, Instruction.Call,
+    Instruction.Len, Instruction.Substr {
 
     enum OpCode {
         CONSTANT,
         ADD, SUBTRACT, MULTIPLY, DIVIDE, NEGATE,
         TRUE, FALSE, NIL,
         EQUAL, GREATER, LESS,
-        JUMP_IF_FALSE, JUMP,
+        JUMP_IF_FALSE,
+        JUMP_IF_FALSE_KEEP,   // jump if false, but leave value on stack (&&)
+        JUMP_IF_TRUE_KEEP,    // jump if true, but leave value on stack (||)
+        JUMP,
         PRINT, POP,
         GET_LOCAL, SET_LOCAL,
         RETURN, NOT,
-        MAKE_LAMBDA,  // arg: constant-pool index of LambdaTemplate
-        CALL          // arg: argument count (callee is on top of stack, above args)
+        MAKE_LAMBDA,
+        CALL,
+        LEN,
+        SUBSTR,
+        MAKE_ARRAY,
+        GET_INDEX,
+        SET_INDEX,
+        PUSH_ARR
     }
 
     record Constant(int constantIndex) implements Instruction {}
@@ -1120,6 +1355,8 @@ sealed interface Instruction permits
     record Greater() implements Instruction {}
     record Less() implements Instruction {}
     record JumpIfFalse(int offset) implements Instruction {}
+    record JumpIfFalseKeep(int offset) implements Instruction {}
+    record JumpIfTrueKeep(int offset) implements Instruction {}
     record Jump(int offset) implements Instruction {}
     record Print() implements Instruction {}
     record Pop() implements Instruction {}
@@ -1128,37 +1365,61 @@ sealed interface Instruction permits
     record Return() implements Instruction {}
     record Not() implements Instruction {}
     record MakeLambda(int templateIndex) implements Instruction {}
+    record Len() implements Instruction {}
+    record Substr() implements Instruction {}
     record Call(int argCount) implements Instruction {}
 }
 
 // Template stored in the constant pool; carries AST + captured variable names.
 class LambdaTemplate {
     final List<String> params;
-    final Expr body;
-    final List<String> capturedNames; // in-scope local names at definition site
+    final Expr body;           // null for named functions
+    final List<Stmt> stmtBody; // null for inline lambdas
+    final List<String> capturedNames;
+    final String selfName;     // non-null for named functions (enables self-reference)
 
     LambdaTemplate(List<String> params, Expr body, List<String> capturedNames) {
         this.params = params;
         this.body = body;
+        this.stmtBody = null;
         this.capturedNames = capturedNames;
+        this.selfName = null;
+    }
+
+    LambdaTemplate(List<String> params, List<Stmt> stmtBody,
+                   List<String> capturedNames, String selfName) {
+        this.params = params;
+        this.body = null;
+        this.stmtBody = stmtBody;
+        this.capturedNames = capturedNames;
+        this.selfName = selfName;
     }
 }
 
 // Runtime closure value: a lambda paired with captured variable values.
 class LambdaValue {
     final List<String> params;
-    final Expr body;
+    final Expr body;           // null for named functions
+    final List<Stmt> stmtBody; // null for inline lambdas
     final Map<String, Object> capturedEnv;
 
     LambdaValue(List<String> params, Expr body, Map<String, Object> capturedEnv) {
         this.params = params;
         this.body = body;
+        this.stmtBody = null;
+        this.capturedEnv = capturedEnv;
+    }
+
+    LambdaValue(List<String> params, List<Stmt> stmtBody, Map<String, Object> capturedEnv) {
+        this.params = params;
+        this.body = null;
+        this.stmtBody = stmtBody;
         this.capturedEnv = capturedEnv;
     }
 
     @Override
     public String toString() {
-        return "<lambda(" + String.join(", ", params) + ")>";
+        return "<fn(" + String.join(", ", params) + ")>";
     }
 }
 
@@ -1214,6 +1475,12 @@ class BytecodeEmitter {
         chunk.write((byte) instruction, line);
     }
 
+    // Emit a 2-byte big-endian unsigned short (for constant/local indices).
+    public void emitShort(int value, int line) {
+        chunk.write((byte)((value >> 8) & 0xFF), line);
+        chunk.write((byte)(value & 0xFF), line);
+    }
+
     public int addConstant(Object value) {
         return chunk.addConstant(value);
     }
@@ -1221,7 +1488,7 @@ class BytecodeEmitter {
     public void emitConstant(Object value, int line) {
         int constantIndex = addConstant(value);
         emit((byte)Instruction.OpCode.CONSTANT.ordinal(), line);
-        emit(constantIndex, line);
+        emitShort(constantIndex, line);
     }
 
     public void declareVariable(String name) {
@@ -1330,9 +1597,24 @@ class BytecodeEmitter {
             Integer slot = getVariableSlot(assignStmt.name().lexeme());
             if (slot != null) {
                 emit((byte)Instruction.OpCode.SET_LOCAL.ordinal(), 0);
-                emit((byte)(int)slot, 0);
+                emitShort(slot, 0);
             }
             emit((byte)Instruction.OpCode.POP.ordinal(), 0);
+        } else if (stmt instanceof Stmt.Function funStmt) {
+            List<String> params = funStmt.params().stream().map(Token::lexeme).toList();
+            LambdaTemplate template = new LambdaTemplate(
+                params, funStmt.body(), new ArrayList<>(localNames), funStmt.name().lexeme());
+            int idx = addConstant(template);
+            emit((byte)Instruction.OpCode.MAKE_LAMBDA.ordinal(), funStmt.name().line());
+            emitShort(idx, funStmt.name().line());
+            declareVariable(funStmt.name().lexeme());
+        } else if (stmt instanceof Stmt.Return retStmt) {
+            if (retStmt.value() != null) {
+                visitExpression(retStmt.value());
+            } else {
+                emit((byte)Instruction.OpCode.NIL.ordinal(), retStmt.keyword().line());
+            }
+            emit((byte)Instruction.OpCode.RETURN.ordinal(), retStmt.keyword().line());
         }
     }
 
@@ -1392,7 +1674,7 @@ class BytecodeEmitter {
         Integer slot = getVariableSlot(variable.name().lexeme());
         if (slot != null) {
             emit((byte)Instruction.OpCode.GET_LOCAL.ordinal(), variable.name().line());
-            emit(slot, variable.name().line());
+            emitShort(slot, variable.name().line());
         } else {
             System.err.println("Error: Undefined variable '" + variable.name().lexeme() + "'");
         }
@@ -1403,7 +1685,7 @@ class BytecodeEmitter {
         Integer slot = getVariableSlot(assign.name().lexeme());
         if (slot != null) {
             emit((byte)Instruction.OpCode.SET_LOCAL.ordinal(), assign.name().line());
-            emit(slot, assign.name().line());
+            emitShort(slot, assign.name().line());
         } else {
             System.err.println("Error: Undefined variable '" + assign.name().lexeme() + "'");
         }
@@ -1432,6 +1714,30 @@ class BytecodeEmitter {
             visitPipe(pipe);
         } else if (expr instanceof Expr.Lambda lambda) {
             visitLambda(lambda);
+        } else if (expr instanceof Expr.Logical logical) {
+            visitLogical(logical);
+        } else if (expr instanceof Expr.ArrayLiteral arrLit) {
+            visitArrayLiteral(arrLit);
+        } else if (expr instanceof Expr.Index idxExpr) {
+            visitIndex(idxExpr);
+        }
+    }
+
+    private void visitLogical(Expr.Logical logical) {
+        visitExpression(logical.left());
+        int line = logical.operator().line();
+        if (logical.operator().type() == TokenType.AND) {
+            // If left is false, skip right and keep false on stack.
+            int skipRight = emitJump(Instruction.OpCode.JUMP_IF_FALSE_KEEP.ordinal(), line);
+            emit((byte)Instruction.OpCode.POP.ordinal(), line);
+            visitExpression(logical.right());
+            patchJump(skipRight);
+        } else {
+            // OR: if left is true, skip right and keep true on stack.
+            int skipRight = emitJump(Instruction.OpCode.JUMP_IF_TRUE_KEEP.ordinal(), line);
+            emit((byte)Instruction.OpCode.POP.ordinal(), line);
+            visitExpression(logical.right());
+            patchJump(skipRight);
         }
     }
 
@@ -1441,17 +1747,49 @@ class BytecodeEmitter {
         LambdaTemplate template = new LambdaTemplate(params, lambda.body(), new ArrayList<>(localNames));
         int idx = addConstant(template);
         emit((byte)Instruction.OpCode.MAKE_LAMBDA.ordinal(), 0);
-        emit((byte)idx, 0);
+        emitShort(idx, 0);
+    }
+
+    private void visitArrayLiteral(Expr.ArrayLiteral arrLit) {
+        for (Expr elem : arrLit.elements()) visitExpression(elem);
+        emit((byte)Instruction.OpCode.MAKE_ARRAY.ordinal(), arrLit.bracket().line());
+        emit((byte)arrLit.elements().size(), arrLit.bracket().line());
+    }
+
+    private void visitIndex(Expr.Index idxExpr) {
+        visitExpression(idxExpr.array());
+        visitExpression(idxExpr.index());
+        emit((byte)Instruction.OpCode.GET_INDEX.ordinal(), idxExpr.bracket().line());
     }
 
     private void visitCall(Expr.Call call) {
-        if (call.callee() instanceof Expr.Variable var && var.name().lexeme().equals("print")) {
-            // Built-in print: push all args, PRINT count.
-            for (Expr arg : call.arguments()) visitExpression(arg);
-            emit((byte)Instruction.OpCode.PRINT.ordinal(), call.paren().line());
-            emit((byte)call.arguments().size(), call.paren().line());
-            emit((byte)Instruction.OpCode.NIL.ordinal(), call.paren().line());
-        } else {
+        if (call.callee() instanceof Expr.Variable var) {
+            String fname = var.name().lexeme();
+            if (fname.equals("print")) {
+                for (Expr arg : call.arguments()) visitExpression(arg);
+                emit((byte)Instruction.OpCode.PRINT.ordinal(), call.paren().line());
+                emit((byte)call.arguments().size(), call.paren().line());
+                emit((byte)Instruction.OpCode.NIL.ordinal(), call.paren().line());
+                return;
+            }
+            if (fname.equals("len")) {
+                visitExpression(call.arguments().get(0));
+                emit((byte)Instruction.OpCode.LEN.ordinal(), call.paren().line());
+                return;
+            }
+            if (fname.equals("substr")) {
+                for (Expr arg : call.arguments()) visitExpression(arg);
+                emit((byte)Instruction.OpCode.SUBSTR.ordinal(), call.paren().line());
+                return;
+            }
+            if (fname.equals("push")) {
+                visitExpression(call.arguments().get(0));
+                visitExpression(call.arguments().get(1));
+                emit((byte)Instruction.OpCode.PUSH_ARR.ordinal(), call.paren().line());
+                return;
+            }
+        }
+        {
             // Generic call: push args left-to-right, then push callee, then CALL n.
             // Stack layout: [..., arg0, arg1, ..., argN-1, callee]
             for (Expr arg : call.arguments()) visitExpression(arg);
@@ -1467,19 +1805,32 @@ class BytecodeEmitter {
 
         Expr rhs = pipe.call();
         if (rhs instanceof Expr.Call call) {
-            if (call.callee() instanceof Expr.Variable var && var.name().lexeme().equals("print")) {
-                // print: push extra args, then PRINT (1 + extras).
-                for (Expr arg : call.arguments()) visitExpression(arg);
-                emit((byte)Instruction.OpCode.PRINT.ordinal(), call.paren().line());
-                emit((byte)(1 + call.arguments().size()), call.paren().line());
-                emit((byte)Instruction.OpCode.NIL.ordinal(), call.paren().line());
-            } else {
-                // Named function call: push extra args, push callee, CALL (1 + extras).
-                for (Expr arg : call.arguments()) visitExpression(arg);
-                visitExpression(call.callee());
-                emit((byte)Instruction.OpCode.CALL.ordinal(), call.paren().line());
-                emit((byte)(1 + call.arguments().size()), call.paren().line());
+            if (call.callee() instanceof Expr.Variable var) {
+                String fname = var.name().lexeme();
+                if (fname.equals("print")) {
+                    for (Expr arg : call.arguments()) visitExpression(arg);
+                    emit((byte)Instruction.OpCode.PRINT.ordinal(), call.paren().line());
+                    emit((byte)(1 + call.arguments().size()), call.paren().line());
+                    emit((byte)Instruction.OpCode.NIL.ordinal(), call.paren().line());
+                    return;
+                }
+                if (fname.equals("len")) {
+                    // piped value is the arg — already on stack
+                    emit((byte)Instruction.OpCode.LEN.ordinal(), call.paren().line());
+                    return;
+                }
+                if (fname.equals("substr")) {
+                    // piped value is s; push start and end from the call args
+                    for (Expr arg : call.arguments()) visitExpression(arg);
+                    emit((byte)Instruction.OpCode.SUBSTR.ordinal(), call.paren().line());
+                    return;
+                }
             }
+            // Named function call: push extra args, push callee, CALL (1 + extras).
+            for (Expr arg : call.arguments()) visitExpression(arg);
+            visitExpression(call.callee());
+            emit((byte)Instruction.OpCode.CALL.ordinal(), call.paren().line());
+            emit((byte)(1 + call.arguments().size()), call.paren().line());
         } else {
             // RHS is a lambda literal or a variable holding a lambda.
             // Stack: [..., piped_value, callee]
@@ -1505,6 +1856,11 @@ class VM {
         }
     }
 
+    private static class ReturnValue extends RuntimeException {
+        final Object value;
+        ReturnValue(Object value) { super(null, null, true, false); this.value = value; }
+    }
+
     public void resetStack() {
         stackPointer = 0;
     }
@@ -1520,7 +1876,7 @@ class VM {
                 Instruction.OpCode instruction = readOpCode();
                 switch (instruction) {
                     case CONSTANT: constant(); break;
-                    case ADD: binaryOpInt(Integer::sum); break;
+                    case ADD: add(); break;
                     case SUBTRACT: binaryOpInt((a, b) -> a - b); break;
                     case MULTIPLY: binaryOpInt((a, b) -> a * b); break;
                     case DIVIDE: binaryOpInt((a, b) -> a / b); break;
@@ -1538,9 +1894,17 @@ class VM {
                     case SET_LOCAL: setLocal(); break;
                     case RETURN: returnOp(); return;
                     case JUMP_IF_FALSE: jumpIfFalse(); break;
+                    case JUMP_IF_FALSE_KEEP: jumpIfFalseKeep(); break;
+                    case JUMP_IF_TRUE_KEEP: jumpIfTrueKeep(); break;
                     case JUMP: jump(); break;
                     case MAKE_LAMBDA: makeLambda(); break;
                     case CALL: call(); break;
+                    case LEN: len(); break;
+                    case SUBSTR: substr(); break;
+                    case MAKE_ARRAY: makeArray(); break;
+                    case GET_INDEX: getIndex(); break;
+                    case SET_INDEX: setIndex(); break;
+                    case PUSH_ARR: pushArr(); break;
                     default:
                         throw new RuntimeError("Unknown opcode: " + instruction);
                 }
@@ -1562,9 +1926,15 @@ class VM {
         return offset;
     }
 
+    // Reads a 2-byte big-endian unsigned index (0–65535).
+    private int readShortUnsigned() {
+        int high = chunk.codeAt(ip++) & 0xFF;
+        int low = chunk.codeAt(ip++) & 0xFF;
+        return (high << 8) | low;
+    }
+
     private Object readConstant() {
-        int constantIndex = chunk.codeAt(ip++) & 0xFF;
-        return chunk.constantAt(constantIndex);
+        return chunk.constantAt(readShortUnsigned());
     }
 
     private void push(Object value) {
@@ -1582,6 +1952,84 @@ class VM {
 
     private void constant() {
         push(readConstant());
+    }
+
+    private void add() {
+        Object b = pop();
+        Object a = pop();
+        if (a instanceof String || b instanceof String) {
+            push(String.valueOf(a == null ? "null" : a) + String.valueOf(b == null ? "null" : b));
+        } else {
+            Integer intA = toInt(a);
+            Integer intB = toInt(b);
+            if (intA == null || intB == null) throw new RuntimeError("Operands must be numbers or strings.");
+            push(intA + intB);
+        }
+    }
+
+    private void len() {
+        Object val = pop();
+        if (val instanceof String s) { push(s.length()); return; }
+        if (val instanceof ArrayList<?> arr) { push(arr.size()); return; }
+        throw new RuntimeError("len() expects a string or array.");
+    }
+
+    @SuppressWarnings("unchecked")
+    private void makeArray() {
+        int count = chunk.codeAt(ip++) & 0xFF;
+        ArrayList<Object> arr = new ArrayList<>(count);
+        for (int i = count - 1; i >= 0; i--) arr.add(null); // reserve slots
+        for (int i = count - 1; i >= 0; i--) arr.set(i, pop());
+        push(arr);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void getIndex() {
+        Object idx = pop();
+        Object arr = pop();
+        if (!(arr instanceof ArrayList<?> list)) throw new RuntimeError("Index operator requires an array.");
+        Integer i = toInt(idx);
+        if (i == null) throw new RuntimeError("Array index must be an integer.");
+        if (i < 0 || i >= list.size()) throw new RuntimeError("Array index out of bounds: " + i);
+        push(list.get(i));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void setIndex() {
+        Object val = pop();
+        Object idx = pop();
+        Object arr = pop();
+        if (!(arr instanceof ArrayList)) throw new RuntimeError("Index assignment requires an array.");
+        Integer i = toInt(idx);
+        if (i == null) throw new RuntimeError("Array index must be an integer.");
+        ArrayList<Object> list = (ArrayList<Object>) arr;
+        if (i < 0 || i >= list.size()) throw new RuntimeError("Array index out of bounds: " + i);
+        list.set(i, val);
+        push(val);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void pushArr() {
+        Object val = pop();
+        Object arr = pop();
+        if (!(arr instanceof ArrayList)) throw new RuntimeError("push() expects an array.");
+        ((ArrayList<Object>) arr).add(val);
+        push(null);
+    }
+
+    private void substr() {
+        Object end   = pop();
+        Object start = pop();
+        Object str   = pop();
+        if (!(str instanceof String s)) throw new RuntimeError("substr() expects a string as first argument.");
+        Integer startIdx = toInt(start);
+        Integer endIdx   = toInt(end);
+        if (startIdx == null || endIdx == null) throw new RuntimeError("substr() indices must be integers.");
+        try {
+            push(s.substring(startIdx, endIdx));
+        } catch (StringIndexOutOfBoundsException e) {
+            throw new RuntimeError("substr() index out of bounds: " + e.getMessage());
+        }
     }
 
     private void binaryOpInt(BinaryOperator<Integer> op) {
@@ -1644,13 +2092,11 @@ class VM {
     }
 
     private void getLocal() {
-        int slot = chunk.codeAt(ip++) & 0xFF;
-        push(stack[slot]);
+        push(stack[readShortUnsigned()]);
     }
 
     private void setLocal() {
-        int slot = chunk.codeAt(ip++) & 0xFF;
-        stack[slot] = peek(0);
+        stack[readShortUnsigned()] = peek(0);
     }
 
     private void jumpIfFalse() {
@@ -1661,20 +2107,42 @@ class VM {
         }
     }
 
+    private void jumpIfFalseKeep() {
+        int offset = readShortOffset();
+        Object condition = peek(0);
+        if (condition instanceof Boolean b && !b) {
+            ip += offset;
+        }
+    }
+
+    private void jumpIfTrueKeep() {
+        int offset = readShortOffset();
+        Object condition = peek(0);
+        if (condition instanceof Boolean b && b) {
+            ip += offset;
+        }
+    }
+
     private void jump() {
         int offset = readShortOffset();
         ip += offset;
     }
 
     private void makeLambda() {
-        int idx = chunk.codeAt(ip++) & 0xFF;
-        LambdaTemplate template = (LambdaTemplate) chunk.constantAt(idx);
-        // Snapshot current local values for captured variables.
+        LambdaTemplate template = (LambdaTemplate) chunk.constantAt(readShortUnsigned());
         Map<String, Object> captured = new HashMap<>();
         for (int i = 0; i < template.capturedNames.size() && i < stackPointer; i++) {
             captured.put(template.capturedNames.get(i), stack[i]);
         }
-        push(new LambdaValue(template.params, template.body, captured));
+        LambdaValue lv;
+        if (template.stmtBody != null) {
+            lv = new LambdaValue(template.params, template.stmtBody, captured);
+            // Self-inject so the function can call itself recursively.
+            if (template.selfName != null) captured.put(template.selfName, lv);
+        } else {
+            lv = new LambdaValue(template.params, template.body, captured);
+        }
+        push(lv);
     }
 
     // Stack before CALL n: [..., arg0, ..., argN-1, callee]
@@ -1689,12 +2157,65 @@ class VM {
                 (callee == null ? "null" : callee.getClass().getSimpleName()));
         }
         if (lambda.params.size() != argCount) {
-            throw new RuntimeError("Lambda expects " + lambda.params.size() +
+            throw new RuntimeError("Expected " + lambda.params.size() +
                 " argument(s) but got " + argCount + ".");
         }
         Map<String, Object> env = new HashMap<>(lambda.capturedEnv);
         for (int i = 0; i < lambda.params.size(); i++) env.put(lambda.params.get(i), args[i]);
-        push(evaluate(lambda.body, env));
+        if (lambda.stmtBody != null) {
+            push(executeBody(lambda.stmtBody, env));
+        } else {
+            push(evaluate(lambda.body, env));
+        }
+    }
+
+    private Object executeBody(List<Stmt> stmts, Map<String, Object> env) {
+        try {
+            for (Stmt stmt : stmts) executeStmt(stmt, env);
+        } catch (ReturnValue rv) {
+            return rv.value;
+        }
+        return null;
+    }
+
+    private void executeStmt(Stmt stmt, Map<String, Object> env) {
+        if (stmt instanceof Stmt.Expression exprStmt) {
+            evaluate(exprStmt.expression(), env);
+        } else if (stmt instanceof Stmt.Var varStmt) {
+            Object val = varStmt.initializer() != null ? evaluate(varStmt.initializer(), env) : null;
+            env.put(varStmt.name().lexeme(), val);
+        } else if (stmt instanceof Stmt.Assign assignStmt) {
+            env.put(assignStmt.name().lexeme(), evaluate(assignStmt.value(), env));
+        } else if (stmt instanceof Stmt.Return retStmt) {
+            Object val = retStmt.value() != null ? evaluate(retStmt.value(), env) : null;
+            throw new ReturnValue(val);
+        } else if (stmt instanceof Stmt.If ifStmt) {
+            Object cond = evaluate(ifStmt.condition(), env);
+            if (cond instanceof Boolean b && b) {
+                executeStmt(ifStmt.thenBranch(), env);
+            } else if (ifStmt.elseBranch() != null) {
+                executeStmt(ifStmt.elseBranch(), env);
+            }
+        } else if (stmt instanceof Stmt.While whileStmt) {
+            while (true) {
+                Object cond = evaluate(whileStmt.condition(), env);
+                if (!(cond instanceof Boolean b && b)) break;
+                executeStmt(whileStmt.body(), env);
+            }
+        } else if (stmt instanceof Stmt.Block block) {
+            Map<String, Object> blockEnv = new HashMap<>(env);
+            for (Stmt s : block.statements()) executeStmt(s, blockEnv);
+            // propagate mutations to outer variables, not new block-local ones
+            for (String key : env.keySet()) {
+                if (blockEnv.containsKey(key)) env.put(key, blockEnv.get(key));
+            }
+        } else if (stmt instanceof Stmt.Function funStmt) {
+            List<String> params = funStmt.params().stream().map(Token::lexeme).toList();
+            env.put(funStmt.name().lexeme(),
+                new LambdaValue(params, funStmt.body(), new HashMap<>(env)));
+        } else if (stmt instanceof Stmt.Print printStmt) {
+            System.out.println(evaluate(printStmt.expression(), env));
+        }
     }
 
     // Tree-walk evaluator used for lambda bodies.
@@ -1712,6 +2233,11 @@ class VM {
             return env.get(name);
         }
         if (expr instanceof Expr.Grouping g) return evaluate(g.expression(), env);
+        if (expr instanceof Expr.Assign asgn) {
+            Object val = evaluate(asgn.value(), env);
+            env.put(asgn.name().lexeme(), val);
+            return val;
+        }
         if (expr instanceof Expr.Unary u) {
             Object val = evaluate(u.right(), env);
             return switch (u.operator().type()) {
@@ -1725,18 +2251,63 @@ class VM {
             Object right = evaluate(b.right(), env);
             return evalBinary(b.operator().type(), left, right);
         }
+        if (expr instanceof Expr.Logical log) {
+            Object left = evaluate(log.left(), env);
+            if (log.operator().type() == TokenType.AND) {
+                if (left instanceof Boolean bv && !bv) return left;
+            } else {
+                if (left instanceof Boolean bv && bv) return left;
+            }
+            return evaluate(log.right(), env);
+        }
         if (expr instanceof Expr.Lambda lam) {
             // Nested lambda: close over current env.
             List<String> params = lam.params().stream().map(Token::lexeme).toList();
             return new LambdaValue(params, lam.body(), new HashMap<>(env));
         }
+        if (expr instanceof Expr.ArrayLiteral arrLit) {
+            ArrayList<Object> arr = new ArrayList<>();
+            for (Expr elem : arrLit.elements()) arr.add(evaluate(elem, env));
+            return arr;
+        }
+        if (expr instanceof Expr.Index idxExpr) {
+            Object arr = evaluate(idxExpr.array(), env);
+            Object idx = evaluate(idxExpr.index(), env);
+            if (!(arr instanceof ArrayList<?> list)) throw new RuntimeError("Index operator requires an array.");
+            Integer i = toInt(idx);
+            if (i == null) throw new RuntimeError("Array index must be an integer.");
+            if (i < 0 || i >= list.size()) throw new RuntimeError("Array index out of bounds: " + i);
+            return list.get(i);
+        }
         if (expr instanceof Expr.Call call) {
-            if (call.callee() instanceof Expr.Variable cv && cv.name().lexeme().equals("print")) {
-                StringBuilder sb = new StringBuilder();
-                for (Expr arg : call.arguments())
-                    sb.append(evaluate(arg, env));
-                System.out.println(sb);
-                return null;
+            if (call.callee() instanceof Expr.Variable cv) {
+                String fname = cv.name().lexeme();
+                if (fname.equals("print")) {
+                    StringBuilder sb = new StringBuilder();
+                    for (Expr arg : call.arguments()) sb.append(evaluate(arg, env));
+                    System.out.println(sb);
+                    return null;
+                }
+                if (fname.equals("len")) {
+                    Object val = evaluate(call.arguments().get(0), env);
+                    if (val instanceof String s) return s.length();
+                    if (val instanceof ArrayList<?> arr) return arr.size();
+                    throw new RuntimeError("len() expects a string or array.");
+                }
+                if (fname.equals("push")) {
+                    Object arr = evaluate(call.arguments().get(0), env);
+                    Object val = evaluate(call.arguments().get(1), env);
+                    if (!(arr instanceof ArrayList)) throw new RuntimeError("push() expects an array.");
+                    ((ArrayList<Object>) arr).add(val);
+                    return null;
+                }
+                if (fname.equals("substr")) {
+                    Object s     = evaluate(call.arguments().get(0), env);
+                    Object start = evaluate(call.arguments().get(1), env);
+                    Object end   = evaluate(call.arguments().get(2), env);
+                    if (!(s instanceof String str)) throw new RuntimeError("substr() expects a string.");
+                    return str.substring(toInt(start), toInt(end));
+                }
             }
             Object callee = evaluate(call.callee(), env);
             List<Object> args = new ArrayList<>();
@@ -1771,10 +2342,11 @@ class VM {
         if (!(callee instanceof LambdaValue lambda))
             throw new RuntimeError("Value is not callable: " + callee);
         if (lambda.params.size() != args.size())
-            throw new RuntimeError("Lambda expects " + lambda.params.size() +
+            throw new RuntimeError("Expected " + lambda.params.size() +
                 " arg(s), got " + args.size() + ".");
         Map<String, Object> newEnv = new HashMap<>(lambda.capturedEnv);
         for (int i = 0; i < lambda.params.size(); i++) newEnv.put(lambda.params.get(i), args.get(i));
+        if (lambda.stmtBody != null) return executeBody(lambda.stmtBody, newEnv);
         return evaluate(lambda.body, newEnv);
     }
 
@@ -1810,42 +2382,44 @@ class RuneScriptInterpreter {
     private static boolean hadError = false;
 
     public void run(String source) {
-        // Reset error flag
         hadError = false;
-        
+
         try {
             Lexer lexer = new Lexer(source);
             List<Token> tokens = lexer.scanTokens();
+            if (reportErrors(lexer.getErrors())) return;
 
             Parser parser = new Parser(tokens);
             List<Stmt> statements = parser.parse();
+            if (reportErrors(parser.getErrors())) return;
 
-            if (hadError()) return;
-
-            // Resolve variables and types
             Resolver resolver = new Resolver(this);
             resolver.resolve(statements);
+            if (reportErrors(resolver.getErrors())) return;
 
-            if (hadError()) return;
-
-            // Emit bytecode
             BytecodeEmitter emitter = new BytecodeEmitter();
             for (Stmt stmt : statements) {
                 emitter.compileStmt(stmt);
             }
             emitter.emitReturn(0);
 
-            Chunk chunk = emitter.getChunk();
-            vm.interpret(chunk);
+            vm.interpret(emitter.getChunk());
         } catch (Exception ex) {
             System.err.println("Runtime error: " + ex.getMessage());
         }
     }
 
+    private boolean reportErrors(List<String> errors) {
+        if (errors.isEmpty()) return false;
+        errors.forEach(System.err::println);
+        hadError = true;
+        return true;
+    }
+
     private boolean hadError() {
         return hadError;
     }
-    
+
     public void setError() {
         hadError = true;
     }
