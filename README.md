@@ -1,431 +1,135 @@
-# RuneScript Compiler
+# RuneScript
 
-RuneScript is a tiny, statically-typed scripting language compiled to custom stack-based bytecode executed by a VM (also in Java). It features a unique pipe operator and supports modern programming constructs.
+RuneScript is a statically-typed scripting language that compiles to custom stack-based bytecode and runs on a VM — both written in a single Java file. It started as a compiler design project and grew into a fairly complete little language with functions, closures, structs, arrays, and a pipe operator.
 
-## 📘 Documentation
+**[Full documentation →](https://selfannihilator.github.io/runescript/)**
 
-For complete documentation, visit our [online documentation](https://selfannihilator.github.io/runescript/).
+---
 
-## 🎓 Student Project Information
+## Getting Started
 
-This is an educational compiler project demonstrating:
-- Complete compiler pipeline implementation
-- Modern Java 21 features (sealed interfaces, records)
-- Stack-based virtual machine design
-- Language implementation from scratch
-- Academic project for learning compiler construction
+You need Java 21 or higher. Check with `java -version`.
 
-## 📥 Download Instructions
+The JAR is pre-built in the repo — no compilation needed:
 
-### Option 1: Direct Download (Recommended for Beginners)
-**Step-by-step for complete beginners:**
-
-1. **Open your web browser** (Chrome, Firefox, Edge, Safari, etc.)
-
-2. **Go to the RuneScript GitHub releases page:**
-   ```
-   https://github.com/selfAnnihilator/runescript/releases
-   ```
-
-3. **Look for the latest release** (usually at the top)
-   - You'll see a green button labeled "Assets" or a list of files
-   - Find the file named `runescript.jar`
-   - Click on `runescript.jar` to download it
-
-4. **Save the file:**
-   - Your browser will ask where to save the file
-   - Choose a location you can remember (like Desktop or Downloads folder)
-   - Click "Save" or "Download"
-
-5. **Verify the download:**
-   - Go to your Downloads folder (or where you saved it)
-   - You should see a file named `runescript.jar`
-   - This file is about 64KB in size
-
-### Option 2: Using Git (For Those Familiar with Git)
-**If you have Git installed on your computer:**
-
-1. **Open Terminal or Command Prompt:**
-   - **Windows**: Press `Win + R`, type `cmd`, press Enter
-   - **Mac**: Press `Cmd + Space`, type `Terminal`, press Enter
-   - **Linux**: Press `Ctrl + Alt + T`
-
-2. **Navigate to where you want to download the project:**
-   ```bash
-   cd Desktop  # or wherever you want to download it
-   ```
-
-3. **Clone the repository:**
-   ```bash
-   git clone https://github.com/selfAnnihilator/runescript.git
-   ```
-
-4. **Enter the project directory:**
-   ```bash
-   cd runescript
-   ```
-
-5. **The JAR file will be located at:**
-   ```
-   src/runescript.jar
-   ```
-
-### Option 3: Manual Download (Alternative Method)
-**If you don't want to use Git:**
-
-1. **Go to the GitHub repository:**
-   ```
-   https://github.com/selfAnnihilator/runescript
-   ```
-
-2. **Click the green "Code" button** near the top-right of the file list
-
-3. **Select "Download ZIP"** from the dropdown menu
-
-4. **Extract the ZIP file:**
-   - **Windows**: Right-click the ZIP file → "Extract All"
-   - **Mac**: Double-click the ZIP file
-   - **Linux**: Right-click → "Extract Here"
-
-5. **Find the JAR file in the extracted folder:**
-   ```
-   [extracted-folder]/src/runescript.jar
-   ```
-
-### Verification: Check if you have Java installed
-**Before running RuneScript, make sure Java is installed:**
-
-1. **Open Terminal or Command Prompt** (see instructions above)
-
-2. **Type this command:**
-   ```bash
-   java -version
-   ```
-
-3. **Look for output similar to:**
-   ```
-   java version "21.0.x" 202x-xx-xx LTS
-   Java(TM) SE Runtime Environment ...
-   ```
-
-4. **If you get an error like "java is not recognized"**, you need to install Java:**
-   - Go to [Oracle JDK](https://www.oracle.com/java/technologies/downloads/) or [OpenJDK](https://adoptium.net/)
-   - Download and install Java 21 or higher
-   - Restart your terminal after installation
-
-## 🛠️ Prerequisites
-
-- **Java 21 or higher** installed on your system
-- **Terminal/Command Prompt** for running commands
-
-### Verify Java Installation
 ```bash
-java -version
-```
-You should see Java 21 or higher.
-
-## 🚀 Quick Start
-
-### Running RuneScript Programs
-
-**Step-by-step for beginners:**
-
-1. **Make sure you have the `runescript.jar` file** in your current directory
-
-2. **Open Terminal or Command Prompt** in the directory where `runescript.jar` is located:
-   - **Windows**: Hold Shift + Right-click in the folder → Select "Open PowerShell window here"
-   - **Mac/Linux**: Open Terminal and navigate to the folder using `cd`
-
-3. **Run these commands:**
-
-**Execute a script:**
-```bash
-java -jar runescript.jar script.rn
-```
-
-**View tokenization (how the code is broken into parts):**
-```bash
-java -jar runescript.jar --emit-tokens script.rn
-```
-
-**View Abstract Syntax Tree (how the code structure is understood):**
-```bash
-java -jar runescript.jar --emit-ast script.rn
-```
-
-**View generated bytecode (how the code is translated for the computer):**
-```bash
-java -jar runescript.jar --emit-bytecode script.rn
-```
-
-**Start interactive REPL (type and run code directly):**
-```bash
-java -jar runescript.jar
-```
-
-### Creating Your First RuneScript Program
-
-**Step-by-step tutorial:**
-
-1. **Open a text editor:**
-   - **Windows**: Notepad
-   - **Mac**: TextEdit or TextMate
-   - **Linux**: gedit or any text editor
-
-2. **Create a new file** and save it as `hello.rn`
-
-3. **Write your first program:**
-   ```runescript
-   print("Hello, RuneScript!");
-   ```
-
-4. **Save the file** (make sure it has `.rn` extension)
-
-5. **Open Terminal/Command Prompt** in the same directory as your `hello.rn` file
-
-6. **Run the program:**
-   ```bash
-   java -jar runescript.jar hello.rn
-   ```
-
-7. **You should see output:**
-   ```
-   Hello, RuneScript!
-   Returned: null
-   ```
-
-### Beginner-Friendly Examples
-
-**Simple math:**
-```runescript
-print(5 + 3);        // Output: 8
-print(10 - 4);       // Output: 6
-print(6 * 7);        // Output: 42
-```
-
-**Variables:**
-```runescript
-let name: string = "World";
-let age: int = 25;
-print("Hello, ", name, "!");
-print("Age: ", age);
-```
-
-**Conditional logic:**
-```runescript
-let score: int = 85;
-if (score >= 90) {
-    print("Grade: A");
-} else if (score >= 80) {
-    print("Grade: B");
-} else {
-    print("Grade: Needs improvement");
-}
-```
-
-**Loops:**
-```runescript
-let counter: int = 0;
-while (counter < 5) {
-    print("Count: ", counter);
-    counter = counter + 1;
-}
-```
-
-## 📝 Creating Your First RuneScript Program
-
-This section is now covered in the Quick Start section above.
-
-## 🎯 Common Use Cases
-
-### For Students & Learners
-- Study compiler construction techniques
-- Learn language implementation
-- Understand virtual machine design
-- Explore Java 21 features
-
-### For Educators
-- Teaching compiler principles
-- Demonstrating language design
-- Practical exercises in systems programming
-
-### For Developers
-- Understanding how compilers work
-- Learning about bytecode generation
-- Studying virtual machine implementations
-
-## 📚 Example Programs
-
-The repository includes several example programs in the `examples/` directory:
-- `hello.rn` - Basic hello world
-- `arithmetic.rn` - Mathematical operations
-- `variables.rn` - Variable declarations
-- More examples demonstrating language features
-
-To run examples:
-```bash
-java -jar runescript.jar examples/hello.rn
-java -jar runescript.jar examples/arithmetic.rn
-```
-
-## 🛠️ Development & Building
-
-If you want to modify or extend RuneScript:
-
-### Building from Source
-```bash
-# Clone the repository
 git clone https://github.com/selfAnnihilator/runescript.git
 cd runescript
-
-# Compile the source
-javac src/RuneScript.java
-
-# Create JAR (requires manifest.txt)
-jar cfm src/runescript.jar manifest.txt src/*.class
+java -jar src/runescript.jar examples/demo.rn
 ```
 
-### Running in Development Mode
+Or start the REPL:
+
 ```bash
-# Run directly from source
-java -cp src RuneScript [options] [file.rn]
+java -jar src/runescript.jar
 ```
 
-## 📖 Language Features Reference
+---
 
-### Types
-- `int` - Integer numbers
-- `bool` - Boolean values (`true`, `false`)
-- `string` - Text values
+## A Quick Look at the Language
 
-### Variables
-```runescript
-let name: string = "World";
-let age: int = 25;
-let is_valid: bool = true;
 ```
+// Variables require explicit types
+let name: string = "Alice";
+let score: int = 95;
 
-### Control Flow
-```runescript
-if (condition) {
-    // code
-} else {
-    // alternative
+// Functions with typed signatures
+fun factorial(n: int) -> int {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
 }
+print(factorial(10));   // 3628800
 
-while (condition) {
-    // loop body
-}
+// Closures capture by reference
+let rate: int = 10;
+let apply_rate = (x -> x + x * rate / 100);
+print(apply_rate(200));   // 220
+rate = 20;
+print(apply_rate(200));   // 240 — closure sees the update
+
+// Pipe operator chains function calls
+"hello world" |> len() |> print();   // 11
+
+// Structs
+struct Point { x: int, y: int }
+let p: Point = Point { x: 3, y: 4 };
+print(p.x);   // 3
 ```
 
-### Unique Feature: Pipe Operator
-```runescript
-// Pass value as first argument to function
-5 |> print();  // Same as print(5)
+---
 
-// Chain operations
-let x: int = 10;
-x |> add(5) |> multiply(2) |> print();  // print(multiply(add(x, 5), 2))
+## Language Features
+
+- **Types**: `int`, `bool`, `string`, `int[]`, `bool[]`, `string[]`, named structs, first-class functions
+- **Control flow**: `if`/`else if`/`else`, `while`, C-style `for`
+- **Functions**: typed parameters and return types, recursion
+- **Lambdas**: `(x -> expr)` syntax, expression body only
+- **Closures**: by-reference capture via upvalue boxing
+- **Structs**: nominal typing, field access and mutation
+- **Arrays**: literals, indexing, `push()`, `len()`
+- **Built-ins**: `print()`, `len()`, `substr()`, `push()`
+- **Pipe operator**: `value |> func(args)` → `func(value, args)`
+- **Error reporting**: line and column numbers, all errors collected before halting
+
+### Diagnostic flags
+
+```bash
+java -jar src/runescript.jar --emit-tokens script.rn    # tokenization
+java -jar src/runescript.jar --emit-ast script.rn       # AST
+java -jar src/runescript.jar --emit-bytecode script.rn  # disassembled bytecode
 ```
 
-## 📖 Language Features
+---
 
-### Types
-- `int` - Integer numbers
-- `bool` - Boolean values (`true`, `false`)
-- `string` - Text values
+## Building from Source
 
-### Variables
-- Variable declarations: `let name: type = value;`
-- Assignment: `name = new_value;`
-- Static typing with explicit type annotations
+```bash
+bash build.sh
+```
 
-### Operators
-- Arithmetic: `+`, `-`, `*`, `/`
-- Comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`
-- Logical: `!` (negation)
+Compiles `src/RuneScript.java` and packages `src/runescript.jar`.
 
-### Control Flow
-- If/else statements: `if (condition) { ... } else { ... }`
-- While loops: `while (condition) { ... }`
-- Blocks: `{ ... }` for scoping
+---
 
-### Functions
-- Built-in `print(value)` function
-- Support for function calls
+## Running Tests
 
-### Unique Feature: Pipe Operator
-- Syntax: `value |> function(args)`
-- Semantics: Passes `value` as first argument to `function`
-- Chaining: `a |> f() |> g() |> h()` equivalent to `h(g(f(a)))`
+Integration tests (15 programs with expected output):
 
-## 🏗️ Architecture Overview
+```bash
+bash build.sh && bash tests/run_tests.sh
+```
 
-### Compiler Pipeline
-1. **Lexer**: Converts source code to tokens with line/column information
-2. **Parser**: Recursive descent building Abstract Syntax Tree
-3. **Semantic Analyzer**: Type checking and symbol table management
-4. **Bytecode Compiler**: AST to stack-based bytecode translation
-5. **Virtual Machine**: Bytecode execution with stack management
+Unit tests (JUnit 5, 75 tests across Lexer / Parser / Resolver / VM):
 
-### Technology Stack
-- **Language**: Java 21
-- **Architecture**: Single-file implementation for portability
-- **VM**: Stack-based with 256-slot operand stack
-- **Bytecode**: Custom instruction set
-- **Features**: Sealed interfaces, records, modern Java patterns
+```bash
+bash test.sh
+```
 
-## 🤝 Contributing
+See the [Testing docs](https://selfannihilator.github.io/runescript/testing/) for a full breakdown of what each test covers.
 
-This is an educational project. Contributions are welcome for:
-- Bug fixes
-- Documentation improvements
-- Additional examples
-- Performance optimizations
+---
 
-See `CONTRIBUTING.md` for guidelines.
+## Project Structure
 
-## 📄 License
+```
+src/RuneScript.java   — entire compiler and VM in one file
+src/runescript.jar    — pre-built JAR
+tests/                — integration tests (.rn + .expected pairs)
+test/                 — JUnit unit tests
+examples/             — sample programs
+docs/                 — documentation source (deployed via GitHub Pages)
+build.sh              — builds the JAR
+test.sh               — runs JUnit tests
+```
 
-MIT License - see the [LICENSE](LICENSE) file for details.
+The compiler pipeline in order: **Lexer → Parser → Resolver → Bytecode Emitter → VM**. Each stage is a distinct class in `RuneScript.java`, top to bottom.
 
-## 🔧 Troubleshooting for Beginners
+---
 
-### Common Issues and Solutions
+## Contributing
 
-**Issue: "java is not recognized as an internal or external command"**
-- **Solution**: Java is not installed or not in your PATH
-- **Fix**: Install Java 21+ and restart your terminal
+See [CONTRIBUTING.md](CONTRIBUTING.md). Bug fixes, new examples, and additional tests are all welcome.
 
-**Issue: "Could not find or load main class RuneScript"**
-- **Solution**: You're not in the correct directory
-- **Fix**: Navigate to the directory containing `runescript.jar`
+## License
 
-**Issue: "Unable to access jarfile runescript.jar"**
-- **Solution**: The JAR file is not in the current directory
-- **Fix**: Use `ls` (Mac/Linux) or `dir` (Windows) to see files in current directory
-
-**Issue: "Error: Invalid or corrupt jarfile runescript.jar"**
-- **Solution**: The file was not downloaded correctly
-- **Fix**: Redownload the JAR file from the releases page
-
-**Issue: "Permission denied" (on Mac/Linux)**
-- **Solution**: The file needs execution permissions
-- **Fix**: Run `chmod +x runescript.jar` then try again
-
-**Issue: Nothing happens when I run the command**
-- **Solution**: Make sure you're using the correct file name
-- **Fix**: Check that your script file exists and has the `.rn` extension
-
-### Getting Help
-- Check the examples in the `examples/` directory
-- Read the error messages carefully (they show line numbers)
-- Make sure your Java version is 21 or higher
-- Ensure you're in the correct directory when running commands
-
-## 🙏 Acknowledgments
-
-- Built as an educational compiler project
-- Demonstrates complete language implementation
-- Uses modern Java 21 features
-- Designed for learning and teaching purposes
+MIT — see [LICENSE](LICENSE).
