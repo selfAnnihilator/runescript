@@ -51,7 +51,5 @@ markdown_extensions:
   - pymdownx.tilde
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
-  - Language Guide: language.md
-  - Architecture: architecture.md
-  - CLI Reference: cli.md
+  - Testing: testing.md
+  - Examples: examples.md

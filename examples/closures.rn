@@ -6,9 +6,9 @@ let base: int = 10;
 let add_base = (x -> x + base);
 print(add_base(5));    // 15
 
-// Captured by value — changing base afterwards has no effect
+// Captured by reference — changing base IS visible to the closure
 base = 999;
-print(add_base(5));    // still 15, not 1004
+print(add_base(5));    // prints 1004, not 15
 
 // Each closure captures independently
 let multiplier: int = 3;
