@@ -132,19 +132,19 @@ Phased roadmap to address current limitations. Each phase is self-contained and 
 
 ---
 
-## Phase 9 — Structs
+## Phase 9 — Structs ✅
 
-### 9.1 Struct declarations
+### 9.1 Struct declarations ✅
 - Add `STRUCT` token; syntax: `struct Point { x: int, y: int }`
 - Add `Stmt.Struct` AST node (name, fields map)
 - Resolver: register struct type; field access (`p.x`) resolves to field type
 - Emitter/VM: structs stored as `HashMap<String, Object>`; new opcodes `MAKE_STRUCT`, `GET_FIELD`, `SET_FIELD`
 
-### 9.2 Struct instantiation and field access
+### 9.2 Struct instantiation and field access ✅
 - Syntax: `let p: Point = Point { x: 1, y: 2 };`
-- Add `Expr.StructLiteral` and `Expr.FieldAccess` AST nodes
+- Add `Expr.StructLiteral`, `Expr.FieldAccess`, `Expr.FieldAssign` AST nodes
 - Resolver: verify field names and types match struct declaration
-- VM: `MAKE_STRUCT` pops N field values and builds the map
+- VM: `MAKE_STRUCT` pops N field values and builds the map; `GET_FIELD`/`SET_FIELD` for field access
 
 ---
 
@@ -179,8 +179,8 @@ Phased roadmap to address current limitations. Each phase is self-contained and 
 |---|---|---|---|
 | 7.1 | `for` loop | Low | — | ✅
 | 8.1 | Closures / upvalues | High | 3.1, 3.2 | ✅
-| 9.1 | Struct declarations | Medium | — |
-| 9.2 | Struct instantiation + field access | Medium | 9.1 |
+| 9.1 | Struct declarations | Medium | — | ✅
+| 9.2 | Struct instantiation + field access | Medium | 9.1 | ✅
 | 10.1 | Integration tests (shell) | Low | — | ✅
 | 10.2 | Unit tests (Java / JUnit) | Medium | — | ✅
 | 11.1 | Remove duplicate root-level files | Low | — | ✅

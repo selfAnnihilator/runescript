@@ -206,6 +206,7 @@ enum TokenType {
 
     // Custom keywords for our language
     LET,
+    STRUCT,
 
     EOF
 }
@@ -215,7 +216,8 @@ sealed interface Expr permits
     Expr.Assign, Expr.Binary, Expr.Call, Expr.Grouping,
     Expr.Literal, Expr.Logical, Expr.Unary,
     Expr.Variable, Expr.Pipe, Expr.Lambda,
-    Expr.ArrayLiteral, Expr.Index {
+    Expr.ArrayLiteral, Expr.Index,
+    Expr.FieldAccess, Expr.FieldAssign, Expr.StructLiteral {
 
     record Assign(Token name, Expr value) implements Expr {}
 
@@ -241,12 +243,18 @@ sealed interface Expr permits
     record ArrayLiteral(List<Expr> elements, Token bracket) implements Expr {}
 
     record Index(Expr array, Token bracket, Expr index) implements Expr {}
+
+    record FieldAccess(Expr object, Token field) implements Expr {}
+
+    record FieldAssign(Expr object, Token field, Expr value) implements Expr {}
+
+    record StructLiteral(Token name, List<Token> fieldNames, List<Expr> fieldValues) implements Expr {}
 }
 
 // Statement AST nodes
 sealed interface Stmt permits
     Stmt.Block, Stmt.Expression, Stmt.For, Stmt.Function, Stmt.If, Stmt.Print,
-    Stmt.Return, Stmt.Var, Stmt.While, Stmt.Assign {
+    Stmt.Return, Stmt.Var, Stmt.While, Stmt.Assign, Stmt.Struct {
 
     record Block(List<Stmt> statements) implements Stmt {}
 
@@ -268,6 +276,8 @@ sealed interface Stmt permits
     record While(Expr condition, Stmt body) implements Stmt {}
 
     record Assign(Token name, Expr value) implements Stmt {}
+
+    record Struct(Token name, List<Token> fieldNames, List<Token> fieldTypes) implements Stmt {}
 }
 
 // Lexer class
@@ -304,6 +314,7 @@ class Lexer {
 
         // Our custom keywords
         keywords.put("let", TokenType.LET);
+        keywords.put("struct", TokenType.STRUCT);
         keywords.put("int", TokenType.IDENTIFIER);
         keywords.put("bool", TokenType.IDENTIFIER);
         keywords.put("string", TokenType.IDENTIFIER);
@@ -537,12 +548,33 @@ class Parser {
         try {
             if (match(TokenType.LET)) return varDeclaration();
             if (match(TokenType.FUN)) return funDeclaration();
+            if (match(TokenType.STRUCT)) return structDeclaration();
 
             return statement();
         } catch (ParseError error) {
             synchronize();
             return null;
         }
+    }
+
+    private Stmt structDeclaration() {
+        Token name = consume(TokenType.IDENTIFIER, "Expected struct name.");
+        consume(TokenType.LEFT_BRACE, "Expected '{' before struct body.");
+        List<Token> fieldNames = new ArrayList<>();
+        List<Token> fieldTypes = new ArrayList<>();
+        while (!check(TokenType.RIGHT_BRACE) && !isAtEnd()) {
+            fieldNames.add(consume(TokenType.IDENTIFIER, "Expected field name."));
+            consume(TokenType.COLON, "Expected ':' after field name.");
+            Token ftype = consume(TokenType.IDENTIFIER, "Expected field type.");
+            if (match(TokenType.LEFT_BRACKET)) {
+                consume(TokenType.RIGHT_BRACKET, "Expected ']' after '['.");
+                ftype = new Token(TokenType.IDENTIFIER, ftype.lexeme() + "[]", null, ftype.line(), ftype.column());
+            }
+            fieldTypes.add(ftype);
+            if (check(TokenType.COMMA)) advance();
+        }
+        consume(TokenType.RIGHT_BRACE, "Expected '}' after struct body.");
+        return new Stmt.Struct(name, fieldNames, fieldTypes);
     }
 
     private Stmt funDeclaration() {
@@ -699,6 +731,8 @@ class Parser {
             if (expr instanceof Expr.Variable variable) {
                 Token name = variable.name();
                 return new Expr.Assign(name, value);
+            } else if (expr instanceof Expr.FieldAccess fa) {
+                return new Expr.FieldAssign(fa.object(), fa.field(), value);
             } else {
                 throw error(equals, "Invalid assignment target.");
             }
@@ -809,6 +843,9 @@ class Parser {
                 Expr index = expression();
                 consume(TokenType.RIGHT_BRACKET, "Expected ']' after index.");
                 expr = new Expr.Index(expr, bracket, index);
+            } else if (match(TokenType.DOT)) {
+                Token field = consume(TokenType.IDENTIFIER, "Expected field name after '.'.");
+                expr = new Expr.FieldAccess(expr, field);
             } else {
                 break;
             }
@@ -840,7 +877,11 @@ class Parser {
         }
 
         if (match(TokenType.IDENTIFIER)) {
-            return new Expr.Variable(previous());
+            Token name = previous();
+            if (check(TokenType.LEFT_BRACE)) {
+                return parseStructLiteral(name);
+            }
+            return new Expr.Variable(name);
         }
 
         if (match(TokenType.LEFT_PAREN)) {
@@ -901,6 +942,21 @@ class Parser {
         return new Expr.Lambda(params, body);
     }
 
+    // Parse Name { field: expr, ... } — name already consumed.
+    private Expr parseStructLiteral(Token name) {
+        consume(TokenType.LEFT_BRACE, "Expected '{' in struct literal.");
+        List<Token> fieldNames = new ArrayList<>();
+        List<Expr> fieldValues = new ArrayList<>();
+        while (!check(TokenType.RIGHT_BRACE) && !isAtEnd()) {
+            fieldNames.add(consume(TokenType.IDENTIFIER, "Expected field name."));
+            consume(TokenType.COLON, "Expected ':' after field name.");
+            fieldValues.add(expression());
+            if (check(TokenType.COMMA)) advance();
+        }
+        consume(TokenType.RIGHT_BRACE, "Expected '}' after struct literal.");
+        return new Expr.StructLiteral(name, fieldNames, fieldValues);
+    }
+
     private boolean match(TokenType... types) {
         for (TokenType type : types) {
             if (check(type)) {
@@ -952,7 +1008,7 @@ class Parser {
             if (previous().type() == TokenType.SEMICOLON) return;
 
             switch (peek().type()) {
-                case CLASS, FUN, VAR, FOR, IF, WHILE, RETURN, LET, RIGHT_BRACE:
+                case CLASS, FUN, VAR, FOR, IF, WHILE, RETURN, LET, RIGHT_BRACE, STRUCT:
                     return;
             }
 
@@ -964,7 +1020,7 @@ class Parser {
 // Type system
 sealed interface Type permits
     Type.IntType, Type.BoolType, Type.StringType, Type.NilType,
-    Type.ErrorType, Type.FunctionType, Type.ArrayType {
+    Type.ErrorType, Type.FunctionType, Type.ArrayType, Type.StructType {
 
     record IntType() implements Type { public String toString() { return "int"; } }
     record BoolType() implements Type { public String toString() { return "bool"; } }
@@ -976,6 +1032,9 @@ sealed interface Type permits
     }
     record ArrayType(Type element) implements Type {
         public String toString() { return element + "[]"; }
+    }
+    record StructType(String name, LinkedHashMap<String, Type> fields) implements Type {
+        public String toString() { return name; }
     }
 
     static Type fromString(String typeName) {
@@ -1001,6 +1060,7 @@ class Resolver {
     private final Stack<Map<String, Type>> scopes = new Stack<>();
     private final List<String> errors = new ArrayList<>();
     private Type currentReturnType = null;
+    private final Map<String, Type.StructType> structTypes = new HashMap<>();
 
     public Resolver(RuneScriptInterpreter interpreter) {
         this.interpreter = interpreter;
@@ -1008,6 +1068,14 @@ class Resolver {
 
     public List<String> getErrors() {
         return errors;
+    }
+
+    private Type resolveTypeAnnotation(String typeName) {
+        Type t = Type.fromString(typeName);
+        if (t instanceof Type.ErrorType && structTypes.containsKey(typeName)) {
+            return structTypes.get(typeName);
+        }
+        return t;
     }
 
     public void resolve(List<Stmt> statements) {
@@ -1019,13 +1087,22 @@ class Resolver {
     }
 
     private void resolve(Stmt stmt) {
-        if (stmt instanceof Stmt.Var varStmt) {
+        if (stmt instanceof Stmt.Struct structStmt) {
+            LinkedHashMap<String, Type> fields = new LinkedHashMap<>();
+            for (int i = 0; i < structStmt.fieldNames().size(); i++) {
+                String fname = structStmt.fieldNames().get(i).lexeme();
+                Type ftype = resolveTypeAnnotation(structStmt.fieldTypes().get(i).lexeme());
+                fields.put(fname, ftype);
+            }
+            Type.StructType st = new Type.StructType(structStmt.name().lexeme(), fields);
+            structTypes.put(structStmt.name().lexeme(), st);
+        } else if (stmt instanceof Stmt.Var varStmt) {
             declare(varStmt.name(), varStmt.type() != null ?
-                   Type.fromString(varStmt.type().lexeme()) : null);
+                   resolveTypeAnnotation(varStmt.type().lexeme()) : null);
             if (varStmt.initializer() != null) {
                 Type initializerType = resolve(varStmt.initializer());
                 Type varType = varStmt.type() != null ?
-                              Type.fromString(varStmt.type().lexeme()) : initializerType;
+                              resolveTypeAnnotation(varStmt.type().lexeme()) : initializerType;
                 if (!isCompatible(varType, initializerType)) {
                     error(varStmt.name(),
                           "Cannot assign " + initializerType + " to " + varType);
@@ -1081,18 +1158,17 @@ class Resolver {
             resolve(printStmt.expression());
         } else if (stmt instanceof Stmt.Function funStmt) {
             List<Type> paramTypes = funStmt.paramTypes().stream()
-                .map(t -> Type.fromString(t.lexeme())).toList();
-            Type retType = Type.fromString(funStmt.returnType().lexeme());
+                .map(t -> resolveTypeAnnotation(t.lexeme())).toList();
+            Type retType = resolveTypeAnnotation(funStmt.returnType().lexeme());
             Type.FunctionType fnType = new Type.FunctionType(paramTypes, retType);
             declare(funStmt.name(), fnType);
             assign(funStmt.name(), fnType);
             Type savedReturnType = currentReturnType;
-            currentReturnType = Type.fromString(funStmt.returnType().lexeme());
+            currentReturnType = resolveTypeAnnotation(funStmt.returnType().lexeme());
             beginScope();
             for (int i = 0; i < funStmt.params().size(); i++) {
-                Type paramType = Type.fromString(funStmt.paramTypes().get(i).lexeme());
+                Type paramType = resolveTypeAnnotation(funStmt.paramTypes().get(i).lexeme());
                 declare(funStmt.params().get(i), paramType);
-                assign(funStmt.params().get(i), paramType);
             }
             for (Stmt s : funStmt.body()) resolve(s);
             endScope();
@@ -1287,6 +1363,55 @@ class Resolver {
                 return new Type.ErrorType();
             }
             return at.element();
+        } else if (expr instanceof Expr.StructLiteral sl) {
+            Type.StructType st = structTypes.get(sl.name().lexeme());
+            if (st == null) {
+                error(sl.name(), "Undefined struct '" + sl.name().lexeme() + "'.");
+                return new Type.ErrorType();
+            }
+            for (int i = 0; i < sl.fieldNames().size(); i++) {
+                Token fname = sl.fieldNames().get(i);
+                Type ftype = resolve(sl.fieldValues().get(i));
+                Type expected = st.fields().get(fname.lexeme());
+                if (expected == null) {
+                    error(fname, "Unknown field '" + fname.lexeme() + "' in struct '" + st.name() + "'.");
+                } else if (!isCompatible(expected, ftype)) {
+                    error(fname, "Cannot assign " + ftype + " to field '" + fname.lexeme() +
+                          "' of type " + expected + ".");
+                }
+            }
+            return st;
+        } else if (expr instanceof Expr.FieldAccess fa) {
+            Type objType = resolve(fa.object());
+            if (!(objType instanceof Type.StructType st)) {
+                error(fa.field(), "Field access requires a struct.");
+                return new Type.ErrorType();
+            }
+            Type fieldType = st.fields().get(fa.field().lexeme());
+            if (fieldType == null) {
+                error(fa.field(), "Unknown field '" + fa.field().lexeme() + "' in struct '" + st.name() + "'.");
+                return new Type.ErrorType();
+            }
+            return fieldType;
+        } else if (expr instanceof Expr.FieldAssign fassign) {
+            Type objType = resolve(fassign.object());
+            Type valueType = resolve(fassign.value());
+            if (!(objType instanceof Type.StructType st)) {
+                error(fassign.field(), "Field assignment requires a struct.");
+                return new Type.ErrorType();
+            }
+            Type fieldType = st.fields().get(fassign.field().lexeme());
+            if (fieldType == null) {
+                error(fassign.field(), "Unknown field '" + fassign.field().lexeme() +
+                      "' in struct '" + st.name() + "'.");
+                return new Type.ErrorType();
+            }
+            if (!isCompatible(fieldType, valueType)) {
+                error(fassign.field(), "Cannot assign " + valueType + " to field '" +
+                      fassign.field().lexeme() + "' of type " + fieldType + ".");
+                return new Type.ErrorType();
+            }
+            return fieldType;
         }
 
         return new Type.ErrorType();
@@ -1303,9 +1428,12 @@ class Resolver {
     }
 
     private boolean isCompatible(Type expected, Type actual) {
-        if (expected == null || actual == null || 
+        if (expected == null || actual == null ||
             expected instanceof Type.ErrorType || actual instanceof Type.ErrorType) {
             return false;
+        }
+        if (expected instanceof Type.StructType s1 && actual instanceof Type.StructType s2) {
+            return s1.name().equals(s2.name());
         }
         return expected.getClass().equals(actual.getClass());
     }
@@ -1366,7 +1494,8 @@ sealed interface Instruction permits
     Instruction.Return, Instruction.Not,
     Instruction.MakeLambda, Instruction.Call,
     Instruction.Len, Instruction.Substr,
-    Instruction.CaptureUpvalue, Instruction.GetUpvalue, Instruction.SetUpvalue {
+    Instruction.CaptureUpvalue, Instruction.GetUpvalue, Instruction.SetUpvalue,
+    Instruction.MakeStruct, Instruction.GetField, Instruction.SetField {
 
     enum OpCode {
         CONSTANT,
@@ -1390,7 +1519,10 @@ sealed interface Instruction permits
         PUSH_ARR,
         CAPTURE_UPVALUE,
         GET_UPVALUE,
-        SET_UPVALUE
+        SET_UPVALUE,
+        MAKE_STRUCT,
+        GET_FIELD,
+        SET_FIELD
     }
 
     record Constant(int constantIndex) implements Instruction {}
@@ -1422,6 +1554,9 @@ sealed interface Instruction permits
     record CaptureUpvalue(int slot) implements Instruction {}
     record GetUpvalue(int index) implements Instruction {}
     record SetUpvalue(int index) implements Instruction {}
+    record MakeStruct(int templateIdx, int count) implements Instruction {}
+    record GetField(int fieldNameIdx) implements Instruction {}
+    record SetField(int fieldNameIdx) implements Instruction {}
 }
 
 // Template stored in the constant pool; carries AST + captured variable names.
@@ -1482,6 +1617,16 @@ class UpvalueObj {
     Object value;
     UpvalueObj(Object v) { this.value = v; }
     @Override public String toString() { return value == null ? "null" : value.toString(); }
+}
+
+// Template stored in the constant pool for MAKE_STRUCT.
+class StructTemplate {
+    final String name;
+    final List<String> fieldNames;
+    StructTemplate(String name, List<String> fieldNames) {
+        this.name = name;
+        this.fieldNames = fieldNames;
+    }
 }
 
 // Chunk class to hold bytecode and constants
@@ -1620,7 +1765,9 @@ class BytecodeEmitter {
     }
 
     public void compileStmt(Stmt stmt) {
-        if (stmt instanceof Stmt.Expression exprStmt) {
+        if (stmt instanceof Stmt.Struct) {
+            // Struct declarations are type-level only; no bytecode emitted.
+        } else if (stmt instanceof Stmt.Expression exprStmt) {
             visitExpression(exprStmt.expression());
             emit((byte)Instruction.OpCode.POP.ordinal(), 0);
         } else if (stmt instanceof Stmt.Var varStmt) {
@@ -1799,6 +1946,12 @@ class BytecodeEmitter {
             visitArrayLiteral(arrLit);
         } else if (expr instanceof Expr.Index idxExpr) {
             visitIndex(idxExpr);
+        } else if (expr instanceof Expr.StructLiteral sl) {
+            visitStructLiteral(sl);
+        } else if (expr instanceof Expr.FieldAccess fa) {
+            visitFieldAccess(fa);
+        } else if (expr instanceof Expr.FieldAssign fassign) {
+            visitFieldAssign(fassign);
         }
     }
 
@@ -1843,6 +1996,31 @@ class BytecodeEmitter {
         visitExpression(idxExpr.array());
         visitExpression(idxExpr.index());
         emit((byte)Instruction.OpCode.GET_INDEX.ordinal(), idxExpr.bracket().line());
+    }
+
+    private void visitStructLiteral(Expr.StructLiteral sl) {
+        for (Expr fval : sl.fieldValues()) visitExpression(fval);
+        List<String> names = sl.fieldNames().stream().map(Token::lexeme).toList();
+        StructTemplate tmpl = new StructTemplate(sl.name().lexeme(), names);
+        int idx = addConstant(tmpl);
+        emit((byte)Instruction.OpCode.MAKE_STRUCT.ordinal(), sl.name().line());
+        emitShort(idx, sl.name().line());
+        emit((byte)sl.fieldValues().size(), sl.name().line());
+    }
+
+    private void visitFieldAccess(Expr.FieldAccess fa) {
+        visitExpression(fa.object());
+        int idx = addConstant(fa.field().lexeme());
+        emit((byte)Instruction.OpCode.GET_FIELD.ordinal(), fa.field().line());
+        emitShort(idx, fa.field().line());
+    }
+
+    private void visitFieldAssign(Expr.FieldAssign fassign) {
+        visitExpression(fassign.object());
+        visitExpression(fassign.value());
+        int idx = addConstant(fassign.field().lexeme());
+        emit((byte)Instruction.OpCode.SET_FIELD.ordinal(), fassign.field().line());
+        emitShort(idx, fassign.field().line());
     }
 
     private void visitCall(Expr.Call call) {
@@ -1991,6 +2169,9 @@ class VM {
                     case CAPTURE_UPVALUE: captureUpvalue(); break;
                     case GET_UPVALUE: getUpvalue(); break;
                     case SET_UPVALUE: setUpvalue(); break;
+                    case MAKE_STRUCT: makeStruct(); break;
+                    case GET_FIELD: getField(); break;
+                    case SET_FIELD: setField(); break;
                     default:
                         throw new RuntimeError("Unknown opcode: " + instruction);
                 }
@@ -2202,6 +2383,40 @@ class VM {
 
     private void setUpvalue() {
         throw new RuntimeError("SET_UPVALUE not yet supported.");
+    }
+
+    @SuppressWarnings("unchecked")
+    private void makeStruct() {
+        StructTemplate tmpl = (StructTemplate) chunk.constantAt(readShortUnsigned());
+        int count = chunk.codeAt(ip++) & 0xFF;
+        Object[] vals = new Object[count];
+        for (int i = count - 1; i >= 0; i--) vals[i] = pop();
+        LinkedHashMap<String, Object> fields = new LinkedHashMap<>();
+        for (int i = 0; i < count; i++) fields.put(tmpl.fieldNames.get(i), vals[i]);
+        push(fields);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void getField() {
+        String fieldName = (String) chunk.constantAt(readShortUnsigned());
+        Object obj = pop();
+        if (!(obj instanceof LinkedHashMap<?, ?> map))
+            throw new RuntimeError("GET_FIELD requires a struct, got: " +
+                (obj == null ? "null" : obj.getClass().getSimpleName()));
+        if (!((LinkedHashMap<String, Object>) map).containsKey(fieldName))
+            throw new RuntimeError("Undefined field '" + fieldName + "'.");
+        push(((LinkedHashMap<String, Object>) map).get(fieldName));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void setField() {
+        String fieldName = (String) chunk.constantAt(readShortUnsigned());
+        Object val = pop();
+        Object obj = pop();
+        if (!(obj instanceof LinkedHashMap<?, ?> map))
+            throw new RuntimeError("SET_FIELD requires a struct.");
+        ((LinkedHashMap<String, Object>) obj).put(fieldName, val);
+        push(val);
     }
 
     private void jumpIfFalse() {
@@ -2444,6 +2659,30 @@ class VM {
             List<Object> args = new ArrayList<>();
             for (Expr arg : call.arguments()) args.add(evaluate(arg, env));
             return callLambda(callee, args, env);
+        }
+        if (expr instanceof Expr.StructLiteral sl) {
+            LinkedHashMap<String, Object> fields = new LinkedHashMap<>();
+            for (int i = 0; i < sl.fieldNames().size(); i++) {
+                fields.put(sl.fieldNames().get(i).lexeme(), evaluate(sl.fieldValues().get(i), env));
+            }
+            return fields;
+        }
+        if (expr instanceof Expr.FieldAccess fa) {
+            Object obj = evaluate(fa.object(), env);
+            if (!(obj instanceof LinkedHashMap<?, ?> map))
+                throw new RuntimeError("Field access requires a struct.");
+            String field = fa.field().lexeme();
+            if (!((LinkedHashMap<String, Object>) map).containsKey(field))
+                throw new RuntimeError("Undefined field '" + field + "'.");
+            return ((LinkedHashMap<String, Object>) map).get(field);
+        }
+        if (expr instanceof Expr.FieldAssign fassign) {
+            Object obj = evaluate(fassign.object(), env);
+            Object val = evaluate(fassign.value(), env);
+            if (!(obj instanceof LinkedHashMap<?, ?> map))
+                throw new RuntimeError("Field assignment requires a struct.");
+            ((LinkedHashMap<String, Object>) obj).put(fassign.field().lexeme(), val);
+            return val;
         }
         if (expr instanceof Expr.Pipe pipe) {
             Object piped = evaluate(pipe.value(), env);

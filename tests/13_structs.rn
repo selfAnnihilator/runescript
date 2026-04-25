@@ -1,0 +1,27 @@
+struct Point { x: int, y: int }
+struct Person { name: string, age: int }
+
+let p: Point = Point { x: 10, y: 20 };
+print(p.x);
+print(p.y);
+
+p.x = 99;
+print(p.x);
+
+fun sumPoint(pt: Point) -> int {
+    return pt.x + pt.y;
+}
+print(sumPoint(p));
+
+fun makePoint(a: int, b: int) -> Point {
+    return Point { x: a, y: b };
+}
+let q: Point = makePoint(3, 4);
+print(q.x);
+print(q.y);
+
+let alice: Person = Person { name: "Alice", age: 30 };
+print(alice.name);
+print(alice.age);
+alice.age = 31;
+print(alice.age);
