@@ -40,3 +40,7 @@ GIT_SETUP_INSTRUCTIONS.md
 STUDENT_PROJECT_INFO.md
 # Added by code-review-graph
 .code-review-graph/
+
+# Claude Code tooling
+.claude/
+.mcp.json
