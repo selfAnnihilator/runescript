@@ -44,3 +44,6 @@ STUDENT_PROJECT_INFO.md
 # Claude Code tooling
 .claude/
 .mcp.json
+
+# Kiro AI tooling
+.kiro/
