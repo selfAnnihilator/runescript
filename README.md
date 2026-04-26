@@ -99,7 +99,7 @@ Integration tests (15 programs with expected output):
 bash build.sh && bash tests/run_tests.sh
 ```
 
-Unit tests (JUnit 5, 75 tests across Lexer / Parser / Resolver / VM):
+Unit tests (JUnit 5, 85 tests across Lexer / Parser / Resolver / VM):
 
 ```bash
 bash test.sh

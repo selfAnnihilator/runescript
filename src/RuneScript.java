@@ -90,9 +90,58 @@ public class RuneScript {
 
         Chunk chunk = emitter.getChunk();
         System.out.println("Bytecode instructions:");
-        for (int i = 0; i < chunk.codeSize(); i++) {
-            System.out.println(i + ": " + Instruction.OpCode.values()[chunk.codeAt(i) & 0xFF]);
+        for (int i = 0; i < chunk.codeSize();) {
+            i = printInstruction(chunk, i);
         }
+    }
+
+    private static int printInstruction(Chunk chunk, int offset) {
+        int opcodeValue = chunk.codeAt(offset) & 0xFF;
+        Instruction.OpCode[] opcodes = Instruction.OpCode.values();
+        if (opcodeValue >= opcodes.length) {
+            System.out.println(offset + ": <invalid opcode " + opcodeValue + ">");
+            return offset + 1;
+        }
+
+        Instruction.OpCode opcode = opcodes[opcodeValue];
+        int next = offset + 1;
+        switch (opcode) {
+            case CONSTANT, GET_LOCAL, SET_LOCAL, MAKE_LAMBDA, CAPTURE_UPVALUE,
+                 GET_UPVALUE, SET_UPVALUE, GET_FIELD, SET_FIELD -> {
+                int operand = readUnsignedShort(chunk, next);
+                System.out.println(offset + ": " + opcode + " " + operand);
+                next += 2;
+            }
+            case JUMP_IF_FALSE, JUMP_IF_FALSE_KEEP, JUMP_IF_TRUE_KEEP, JUMP -> {
+                int operand = readSignedShort(chunk, next);
+                System.out.println(offset + ": " + opcode + " " + operand);
+                next += 2;
+            }
+            case PRINT, CALL, MAKE_ARRAY -> {
+                int operand = chunk.codeAt(next) & 0xFF;
+                System.out.println(offset + ": " + opcode + " " + operand);
+                next += 1;
+            }
+            case MAKE_STRUCT -> {
+                int template = readUnsignedShort(chunk, next);
+                int count = chunk.codeAt(next + 2) & 0xFF;
+                System.out.println(offset + ": " + opcode + " " + template + " " + count);
+                next += 3;
+            }
+            default -> System.out.println(offset + ": " + opcode);
+        }
+        return next;
+    }
+
+    private static int readUnsignedShort(Chunk chunk, int offset) {
+        int high = chunk.codeAt(offset) & 0xFF;
+        int low = chunk.codeAt(offset + 1) & 0xFF;
+        return (high << 8) | low;
+    }
+
+    private static int readSignedShort(Chunk chunk, int offset) {
+        int value = readUnsignedShort(chunk, offset);
+        return value > 32767 ? value - 65536 : value;
     }
 
     private static void runPrompt() throws IOException {
@@ -2643,8 +2692,10 @@ class VM {
                 if (fname.equals("push")) {
                     Object arr = evaluate(call.arguments().get(0), env);
                     Object val = evaluate(call.arguments().get(1), env);
-                    if (!(arr instanceof ArrayList)) throw new RuntimeError("push() expects an array.");
-                    ((ArrayList<Object>) arr).add(val);
+                    if (!(arr instanceof ArrayList<?>)) throw new RuntimeError("push() expects an array.");
+                    @SuppressWarnings("unchecked")
+                    ArrayList<Object> list = (ArrayList<Object>) arr;
+                    list.add(val);
                     return null;
                 }
                 if (fname.equals("substr")) {
@@ -2672,16 +2723,18 @@ class VM {
             if (!(obj instanceof LinkedHashMap<?, ?> map))
                 throw new RuntimeError("Field access requires a struct.");
             String field = fa.field().lexeme();
-            if (!((LinkedHashMap<String, Object>) map).containsKey(field))
+            if (!map.containsKey(field))
                 throw new RuntimeError("Undefined field '" + field + "'.");
-            return ((LinkedHashMap<String, Object>) map).get(field);
+            return map.get(field);
         }
         if (expr instanceof Expr.FieldAssign fassign) {
             Object obj = evaluate(fassign.object(), env);
             Object val = evaluate(fassign.value(), env);
-            if (!(obj instanceof LinkedHashMap<?, ?> map))
+            if (!(obj instanceof LinkedHashMap<?, ?>))
                 throw new RuntimeError("Field assignment requires a struct.");
-            ((LinkedHashMap<String, Object>) obj).put(fassign.field().lexeme(), val);
+            @SuppressWarnings("unchecked")
+            LinkedHashMap<String, Object> fields = (LinkedHashMap<String, Object>) obj;
+            fields.put(fassign.field().lexeme(), val);
             return val;
         }
         if (expr instanceof Expr.Pipe pipe) {

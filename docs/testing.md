@@ -118,7 +118,7 @@ Common causes of failures:
 
 The unit tests live in `test/` and use JUnit 5. There are four test classes targeting each compiler stage:
 
-**`LexerTest`** — 20 tests
+**`LexerTest`** — 22 tests
 
 Tests the tokenization stage in isolation by calling `new Lexer(source).scanTokens()` directly.
 
@@ -138,7 +138,7 @@ Tests AST construction by chaining `Lexer → Parser`.
 - Binary expression nodes for arithmetic and logical operators
 - Error recovery — verifies that multiple syntax errors are all reported without the parser crashing
 
-**`ResolverTest`** — 11 tests
+**`ResolverTest`** — 14 tests
 
 Tests the type checker by chaining `Lexer → Parser → Resolver` and inspecting `resolver.getErrors()`.
 
@@ -150,7 +150,7 @@ Tests the type checker by chaining `Lexer → Parser → Resolver` and inspectin
 - Logical operator rules: `&&` and `||` on non-`bool` operands are rejected
 - Multiple errors are collected in a single pass — the test verifies `errors.size() == N` rather than just `> 0`
 
-**`VMTest`** — 28 tests
+**`VMTest`** — 33 tests
 
 Tests end-to-end execution by running `RuneScriptInterpreter` (the top-level entry point) on short programs and comparing stdout/stderr.
 
@@ -183,9 +183,9 @@ Expected summary output at the end:
 [         4 containers started    ]
 [         4 containers successful ]
 [         0 containers failed     ]
-[        75 tests found           ]
-[        75 tests started         ]
-[        75 tests successful      ]
+[        85 tests found           ]
+[        85 tests started         ]
+[        85 tests successful      ]
 [         0 tests failed          ]
 ```
 

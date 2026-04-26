@@ -3,13 +3,19 @@
 
 echo "Building RuneScript..."
 
-# Compile the source (output class files to src/)
-javac -d src src/RuneScript.java
+BUILD_DIR="$(mktemp -d)"
+cleanup() {
+    rm -rf "$BUILD_DIR"
+}
+trap cleanup EXIT
+
+# Compile the source into a temporary directory so the packaged JAR contains
+# only class files and never embeds a previous src/runescript.jar.
+javac -d "$BUILD_DIR" src/RuneScript.java
 
 if [ $? -eq 0 ]; then
     # Create JAR file
-    jar cfm src/runescript.jar manifest.txt -C src .
-    find src -name "*.class" -delete  # Clean up compiled files
+    jar cfm src/runescript.jar manifest.txt -C "$BUILD_DIR" .
     
     echo "Build successful!"
     echo "Run with: java -jar src/runescript.jar [options] [file]"

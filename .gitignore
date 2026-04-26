@@ -47,3 +47,7 @@ STUDENT_PROJECT_INFO.md
 
 # Kiro AI tooling
 .kiro/
+
+# Codex tooling
+.codex
+.codex/
